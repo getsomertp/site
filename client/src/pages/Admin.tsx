@@ -65,6 +65,11 @@ async function adminFetch(url: string, options: RequestInit = {}) {
     throw new Error(payload?.error || payload?.message || "Request failed");
   }
   if (res.status === 204) return null;
+  const ct = res.headers.get("content-type") || "";
+  if (!ct.includes("application/json")) {
+    const preview = (await res.text()).slice(0, 120);
+    throw new Error(`Non-JSON response from ${url} (${res.status}). This usually means the API route was not found and the app returned HTML instead. Preview: ${preview}`);
+  }
   return res.json();
 }
 
@@ -254,7 +259,7 @@ export default function Admin() {
 
   // Site settings
   const { data: siteSettings = {} } = useQuery<Record<string, string>>({
-    queryKey: ["/api/admin/site-settings"],
+    queryKey: ["/api/admin/site/settings"],
     queryFn: () => adminFetch("/api/admin/site-settings"),
     enabled: isAuthenticated === true,
   });
@@ -339,18 +344,18 @@ export default function Admin() {
   // Site settings mutation
   const saveSiteSettings = useMutation({
     mutationFn: async () => {
-      await adminFetch("/api/admin/site-settings/upsert", {
+      await adminFetch("/api/admin/site/settings", {
         method: "POST",
         body: JSON.stringify({ key: "kickUrl", value: siteKickUrl }),
       });
-      await adminFetch("/api/admin/site-settings/upsert", {
+      await adminFetch("/api/admin/site/settings", {
         method: "POST",
         body: JSON.stringify({ key: "discordUrl", value: siteDiscordUrl }),
       });
       return true;
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/site-settings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/site/settings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/site/settings"] });
       toast({ title: "Site settings saved" });
     },
