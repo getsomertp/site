@@ -74,6 +74,19 @@ function shuffleCrypto<T>(arr: T[]): T[] {
   return a;
 }
 
+
+function getErrorMessage(err: any, fallback: string) {
+  // Zod errors are handled separately in most routes
+  const code = err?.code;
+  if (code === "23505") return "Duplicate value (already exists).";
+  if (code === "23502") return "Missing a required value.";
+  if (code === "22P02") return "Invalid input format.";
+  // Prefer pg detail for admin debugging
+  if (typeof err?.detail === "string" && err.detail.trim()) return err.detail;
+  if (typeof err?.message === "string" && err.message.trim()) return err.message;
+  return fallback;
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -146,7 +159,7 @@ export async function registerRoutes(
 
   app.post("/api/auth/logout", (req: Request, res: Response) => {
     req.session.destroy((err) => {
-      if (err) return res.status(500).json({ error: "Logout failed" });
+      if (err) return res.status(500).json({ error: getErrorMessage(error, "Logout failed") });
       res.json({ success: true });
     });
   });
@@ -188,7 +201,7 @@ export async function registerRoutes(
           req.session.isAdmin = true;
           req.session.save((err) => {
             if (err) {
-              return res.status(500).json({ error: "Login failed" });
+              return res.status(500).json({ error: getErrorMessage(error, "Login failed") });
             }
             return res.json({ success: true });
           });
@@ -198,7 +211,7 @@ export async function registerRoutes(
       
       return res.status(401).json({ error: "Invalid password" });
     } catch (error) {
-      res.status(500).json({ error: "Login failed" });
+      res.status(500).json({ error: getErrorMessage(error, "Login failed") });
     }
   });
   
@@ -206,7 +219,7 @@ export async function registerRoutes(
   app.post("/api/admin/logout", (req: Request, res: Response) => {
     req.session.destroy((err) => {
       if (err) {
-        return res.status(500).json({ error: "Logout failed" });
+        return res.status(500).json({ error: getErrorMessage(error, "Logout failed") });
       }
       res.json({ success: true });
     });
@@ -225,7 +238,7 @@ export async function registerRoutes(
       const casinos = await storage.getCasinos();
       res.json(casinos);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch casinos" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch casinos") });
     }
   });
 
@@ -239,7 +252,7 @@ export async function registerRoutes(
       }
       res.json(casino);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch casino" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch casino") });
     }
   });
 
@@ -249,7 +262,7 @@ export async function registerRoutes(
       const casinos = await storage.getAllCasinos();
       res.json(casinos);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch casinos" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch casinos") });
     }
   });
 
@@ -263,7 +276,7 @@ export async function registerRoutes(
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
       }
-      res.status(500).json({ error: "Failed to create casino" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to create casino") });
     }
   });
 
@@ -281,7 +294,7 @@ export async function registerRoutes(
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
       }
-      res.status(500).json({ error: "Failed to update casino" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to update casino") });
     }
   });
 
@@ -292,7 +305,7 @@ export async function registerRoutes(
       await storage.deleteCasino(id);
       res.status(204).send();
     } catch (error) {
-      res.status(500).json({ error: "Failed to delete casino" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to delete casino") });
     }
   });
 
@@ -305,7 +318,7 @@ export async function registerRoutes(
       for (const r of rows) out[r.key] = r.value;
       res.json(out);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch site settings" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch site settings") });
     }
   });
 
@@ -315,7 +328,7 @@ export async function registerRoutes(
       const rows = await storage.getSiteSettings();
       res.json(rows);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch site settings" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch site settings") });
     }
   });
 
@@ -326,7 +339,7 @@ export async function registerRoutes(
       res.status(201).json(row);
     } catch (error) {
       if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
-      res.status(500).json({ error: "Failed to upsert site setting" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to upsert site setting") });
     }
   });
 
@@ -362,7 +375,7 @@ export async function registerRoutes(
       const entries = await storage.getLeaderboardEntries(id, limit);
       res.json(entries);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch leaderboard entries" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch leaderboard entries") });
     }
   });
 
@@ -372,7 +385,7 @@ export async function registerRoutes(
       const lbs = await storage.getLeaderboards(true);
       res.json(lbs);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch leaderboards" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch leaderboards") });
     }
   });
 
@@ -383,7 +396,7 @@ export async function registerRoutes(
       res.status(201).json(lb);
     } catch (error) {
       if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
-      res.status(500).json({ error: "Failed to create leaderboard" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to create leaderboard") });
     }
   });
 
@@ -396,7 +409,7 @@ export async function registerRoutes(
       res.json(lb);
     } catch (error) {
       if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
-      res.status(500).json({ error: "Failed to update leaderboard" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to update leaderboard") });
     }
   });
 
@@ -406,7 +419,7 @@ export async function registerRoutes(
       await storage.deleteLeaderboard(id);
       res.status(204).send();
     } catch (error) {
-      res.status(500).json({ error: "Failed to delete leaderboard" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to delete leaderboard") });
     }
   });
 
@@ -458,7 +471,7 @@ export async function registerRoutes(
       const requirements = await storage.getGiveawayRequirements(id);
       res.json({ ...giveaway, entries, requirements });
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch giveaway" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch giveaway") });
     }
   });
 
@@ -479,7 +492,7 @@ export async function registerRoutes(
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
       }
-      res.status(500).json({ error: "Failed to create giveaway" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to create giveaway") });
     }
   });
 
@@ -504,7 +517,7 @@ export async function registerRoutes(
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
       }
-      res.status(500).json({ error: "Failed to update giveaway" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to update giveaway") });
     }
   });
 
@@ -515,7 +528,7 @@ export async function registerRoutes(
       await storage.deleteGiveaway(id);
       res.status(204).send();
     } catch (error) {
-      res.status(500).json({ error: "Failed to delete giveaway" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to delete giveaway") });
     }
   });
 
@@ -735,7 +748,7 @@ export async function registerRoutes(
         entries,
       });
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch leaderboard" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch leaderboard") });
     }
   });
 
@@ -750,7 +763,7 @@ export async function registerRoutes(
         : await storage.getAllUsers();
       res.json(users);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch users" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch users") });
     }
   });
 
@@ -764,7 +777,7 @@ export async function registerRoutes(
       }
       res.json(details);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch user details" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch user details") });
     }
   });
 
@@ -779,7 +792,7 @@ export async function registerRoutes(
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
       }
-      res.status(500).json({ error: "Failed to add payment" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to add payment") });
     }
   });
 
@@ -791,7 +804,7 @@ export async function registerRoutes(
       const total = await storage.getUserTotalPayments(userId);
       res.json({ payments, total });
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch payments" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch payments") });
     }
   });
 
@@ -811,7 +824,7 @@ export async function registerRoutes(
       );
       res.json(eventsWithEntries);
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch stream events" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch stream events") });
     }
   });
 
@@ -827,7 +840,7 @@ export async function registerRoutes(
       const brackets = event.type === "tournament" ? await storage.getTournamentBrackets(id) : [];
       res.json({ ...event, entries, brackets });
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch stream event" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch stream event") });
     }
   });
 
@@ -842,7 +855,7 @@ export async function registerRoutes(
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
       }
-      res.status(500).json({ error: "Failed to create stream event" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to create stream event") });
     }
   });
 
@@ -860,7 +873,7 @@ export async function registerRoutes(
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
       }
-      res.status(500).json({ error: "Failed to update stream event" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to update stream event") });
     }
   });
 
@@ -871,7 +884,7 @@ export async function registerRoutes(
       await storage.deleteStreamEvent(id);
       res.status(204).send();
     } catch (error) {
-      res.status(500).json({ error: "Failed to delete stream event" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to delete stream event") });
     }
   });
 
@@ -893,7 +906,7 @@ export async function registerRoutes(
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
       }
-      res.status(500).json({ error: "Failed to add entry" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to add entry") });
     }
   });
 
@@ -904,7 +917,7 @@ export async function registerRoutes(
       await storage.deleteStreamEventEntry(entryId);
       res.status(204).send();
     } catch (error) {
-      res.status(500).json({ error: "Failed to delete entry" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to delete entry") });
     }
   });
 
@@ -1005,7 +1018,7 @@ export async function registerRoutes(
       res.json({ ...updated, entries: updatedEntries, brackets });
     } catch (error) {
       console.error(error);
-      res.status(500).json({ error: "Failed to lock event" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to lock event") });
     }
   });
 
@@ -1024,7 +1037,7 @@ export async function registerRoutes(
       const updated = await storage.updateStreamEvent(id, { status: "in_progress" });
       res.json(updated);
     } catch (error) {
-      res.status(500).json({ error: "Failed to start event" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to start event") });
     }
   });
 
@@ -1038,7 +1051,7 @@ export async function registerRoutes(
       }
       res.json(updated);
     } catch (error) {
-      res.status(500).json({ error: "Failed to complete event" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to complete event") });
     }
   });
 
@@ -1075,7 +1088,7 @@ export async function registerRoutes(
       
       res.json(bracket);
     } catch (error) {
-      res.status(500).json({ error: "Failed to update bracket" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to update bracket") });
     }
   });
 
@@ -1108,7 +1121,7 @@ export async function registerRoutes(
       const updatedEntries = await storage.getStreamEventEntries(id);
       res.json({ ...updatedEvent, entries: updatedEntries });
     } catch (error) {
-      res.status(500).json({ error: "Failed to mark as bonused" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to mark as bonused") });
     }
   });
 
@@ -1141,7 +1154,7 @@ export async function registerRoutes(
       const updatedEntries = await storage.getStreamEventEntries(id);
       res.json({ ...updatedEvent, entries: updatedEntries });
     } catch (error) {
-      res.status(500).json({ error: "Failed to mark as no bonus" });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to mark as no bonus") });
     }
   });
 

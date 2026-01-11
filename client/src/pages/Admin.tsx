@@ -54,8 +54,15 @@ async function adminFetch(url: string, options: RequestInit = {}) {
   };
   const res = await fetch(url, { ...options, headers, credentials: "include" });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ error: "Request failed" }));
-    throw new Error(error.error || "Request failed");
+    const payload: any = await res.json().catch(() => ({ error: "Request failed" }));
+    // payload.error can be a string OR a Zod errors array
+    if (Array.isArray(payload?.error) && payload.error.length) {
+      const first = payload.error[0];
+      const msg = first?.message || first?.code || "Validation failed";
+      const path = Array.isArray(first?.path) && first.path.length ? first.path.join(".") : "";
+      throw new Error(path ? `${path}: ${msg}` : msg);
+    }
+    throw new Error(payload?.error || payload?.message || "Request failed");
   }
   if (res.status === 204) return null;
   return res.json();
@@ -289,8 +296,8 @@ export default function Admin() {
       setCasinoForm(defaultCasinoForm);
       toast({ title: "Casino created successfully" });
     },
-    onError: () => {
-      toast({ title: "Failed to create casino", variant: "destructive" });
+    onError: (err: any) => {
+      toast({ title: "Failed to create casino", description: err?.message || "Request failed", variant: "destructive" });
     },
   });
 
@@ -310,8 +317,8 @@ export default function Admin() {
       setCasinoForm(defaultCasinoForm);
       toast({ title: "Casino updated successfully" });
     },
-    onError: () => {
-      toast({ title: "Failed to update casino", variant: "destructive" });
+    onError: (err: any) => {
+      toast({ title: "Failed to update casino", description: err?.message || "Request failed", variant: "destructive" });
     },
   });
 
@@ -324,8 +331,8 @@ export default function Admin() {
       queryClient.invalidateQueries({ queryKey: ["/api/casinos"] });
       toast({ title: "Casino deleted successfully" });
     },
-    onError: () => {
-      toast({ title: "Failed to delete casino", variant: "destructive" });
+    onError: (err: any) => {
+      toast({ title: "Failed to delete casino", description: err?.message || "Request failed", variant: "destructive" });
     },
   });
 
@@ -347,7 +354,7 @@ export default function Admin() {
       queryClient.invalidateQueries({ queryKey: ["/api/site/settings"] });
       toast({ title: "Site settings saved" });
     },
-    onError: () => toast({ title: "Failed to save site settings", variant: "destructive" }),
+    onError: (err: any) => toast({ title: "Failed to save site settings", description: err?.message || "Request failed", variant: "destructive" }),
   });
 
   // Leaderboard mutations
@@ -379,7 +386,7 @@ export default function Admin() {
       setEditingLeaderboard(null);
       toast({ title: "Leaderboard saved" });
     },
-    onError: () => toast({ title: "Failed to save leaderboard", variant: "destructive" }),
+    onError: (err: any) => toast({ title: "Failed to save leaderboard", description: err?.message || "Request failed", variant: "destructive" }),
   });
 
 const updateLeaderboard = useMutation({
@@ -410,7 +417,7 @@ const updateLeaderboard = useMutation({
     setEditingLeaderboard(null);
     toast({ title: "Leaderboard updated" });
   },
-  onError: () => toast({ title: "Failed to update leaderboard", variant: "destructive" }),
+  onError: (err: any) => toast({ title: "Failed to update leaderboard", description: err?.message || "Request failed", variant: "destructive" }),
 });
 
 const deleteLeaderboard = useMutation({
@@ -422,7 +429,7 @@ const deleteLeaderboard = useMutation({
       queryClient.invalidateQueries({ queryKey: ["/api/leaderboards/active"] });
       toast({ title: "Leaderboard deleted" });
     },
-    onError: () => toast({ title: "Failed to delete leaderboard", variant: "destructive" }),
+    onError: (err: any) => toast({ title: "Failed to delete leaderboard", description: err?.message || "Request failed", variant: "destructive" }),
   });
 
   // Giveaway mutations
@@ -454,8 +461,8 @@ const deleteLeaderboard = useMutation({
       setGiveawayForm(defaultGiveawayForm);
       toast({ title: "Giveaway created successfully" });
     },
-    onError: () => {
-      toast({ title: "Failed to create giveaway", variant: "destructive" });
+    onError: (err: any) => {
+      toast({ title: "Failed to create giveaway", description: err?.message || "Request failed", variant: "destructive" });
     },
   });
 
@@ -478,8 +485,8 @@ const deleteLeaderboard = useMutation({
       setGiveawayForm(defaultGiveawayForm);
       toast({ title: "Giveaway updated successfully" });
     },
-    onError: () => {
-      toast({ title: "Failed to update giveaway", variant: "destructive" });
+    onError: (err: any) => {
+      toast({ title: "Failed to update giveaway", description: err?.message || "Request failed", variant: "destructive" });
     },
   });
 
@@ -491,8 +498,8 @@ const deleteLeaderboard = useMutation({
       queryClient.invalidateQueries({ queryKey: ["/api/giveaways"] });
       toast({ title: "Giveaway deleted successfully" });
     },
-    onError: () => {
-      toast({ title: "Failed to delete giveaway", variant: "destructive" });
+    onError: (err: any) => {
+      toast({ title: "Failed to delete giveaway", description: err?.message || "Request failed", variant: "destructive" });
     },
   });
   
