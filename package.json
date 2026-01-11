@@ -79,7 +79,9 @@
     "wouter": "^3.3.5",
     "ws": "^8.18.0",
     "zod": "^3.25.76",
-    "zod-validation-error": "^3.4.0"
+    "zod-validation-error": "^3.4.0",
+    "drizzle-kit": "^0.31.4",
+    "tsx": "^4.20.5"
   },
   "devDependencies": {
     "@replit/vite-plugin-cartographer": "^0.4.4",
@@ -98,11 +100,9 @@
     "@types/ws": "^8.5.13",
     "@vitejs/plugin-react": "^5.0.4",
     "autoprefixer": "^10.4.21",
-    "drizzle-kit": "^0.31.4",
     "esbuild": "^0.25.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.14",
-    "tsx": "^4.20.5",
     "typescript": "5.6.3",
     "vite": "^7.1.9"
   },
