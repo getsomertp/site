@@ -1,0 +1,1068 @@
+import type { Express, Request, Response, NextFunction } from "express";
+import { createServer, type Server } from "http";
+import { storage } from "./storage";
+import passport from "passport";
+import rateLimit from "express-rate-limit";
+import crypto from "crypto";
+import { 
+  insertCasinoSchema, 
+  insertGiveawaySchema,
+  insertUserCasinoAccountSchema,
+  insertUserWalletSchema,
+  insertUserPaymentSchema,
+  insertStreamEventSchema,
+  insertStreamEventEntrySchema
+} from "@shared/schema";
+import { z } from "zod";
+
+// Admin authentication middleware - uses session-based auth
+function adminAuth(req: Request, res: Response, next: NextFunction) {
+  if (req.session && req.session.isAdmin) {
+    return next();
+  }
+  return res.status(401).json({ error: "Unauthorized - Admin login required" });
+}
+
+// Blocks most CSRF attempts without requiring client-side CSRF tokens.
+// Ensures state-changing requests originate from the same site.
+function requireSameOrigin(req: Request, res: Response, next: NextFunction) {
+  const method = req.method.toUpperCase();
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return next();
+
+  const origin = req.headers.origin;
+  // If there is no Origin header, allow (mobile apps / server-to-server).
+  if (!origin) return next();
+
+  const host = req.headers.host;
+  if (!host) return res.status(400).json({ error: "Bad Request" });
+
+  const expected = `${req.secure ? "https" : "http"}://${host}`;
+  if (origin !== expected) {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+  return next();
+}
+
+function requireAuth(req: Request, res: Response, next: NextFunction) {
+  if (req.session?.userId) return next();
+  return res.status(401).json({ error: "Unauthorized - Login required" });
+}
+
+function requireSelfOrAdmin(req: Request, res: Response, next: NextFunction) {
+  const targetUserId = req.params.id;
+  if (req.session?.isAdmin || req.session?.userId === targetUserId) return next();
+  return res.status(403).json({ error: "Forbidden" });
+}
+
+const adminLoginLimiter = rateLimit({
+  windowMs: 15 * 60_000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many login attempts. Try again later." },
+});
+
+function shuffleCrypto<T>(arr: T[]): T[] {
+  // Fisher-Yates using crypto.randomInt
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(0, i + 1);
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+// This blocks cross-site form posts / fetches.
+function sameOrigin(req: Request, res: Response, next: NextFunction) {
+  const method = req.method.toUpperCase();
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return next();
+
+  const origin = req.headers.origin;
+  const host = req.headers.host;
+  if (!host) return res.status(400).json({ error: "Bad request" });
+
+  // If Origin is missing (some non-browser clients), allow.
+  if (!origin) return next();
+
+  // Compare origin host to request host
+  try {
+    const u = new URL(origin);
+    if (u.host !== host) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+    return next();
+  } catch {
+    return res.status(403).json({ error: "Forbidden" });
+  }
+}
+
+const adminLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+export async function registerRoutes(
+  httpServer: Server,
+  app: Express
+): Promise<Server> {
+
+  // Same-origin enforcement for state-changing requests (CSRF mitigation)
+  app.use("/api", requireSameOrigin);
+
+  // ============ USER AUTH (DISCORD) ============
+
+  app.get("/api/auth/me", async (req: Request, res: Response) => {
+    try {
+      const userId = req.session?.userId;
+      if (!userId) return res.json({ user: null });
+
+      const user = await storage.getUser(userId);
+      if (!user) {
+        req.session.userId = undefined;
+        req.session.isAdmin = false;
+        return res.json({ user: null });
+      }
+      // Do not leak sensitive linkage data here.
+      res.json({
+        user: {
+          id: user.id,
+          discordId: user.discordId,
+          discordUsername: user.discordUsername,
+          discordAvatar: user.discordAvatar,
+          kickUsername: user.kickUsername,
+          kickVerified: user.kickVerified,
+          isAdmin: user.isAdmin,
+        },
+      });
+    } catch {
+      res.status(500).json({ error: "Failed to fetch session" });
+    }
+  });
+
+  app.get("/api/auth/discord", (req: Request, res: Response, next: NextFunction) => {
+    if (!process.env.DISCORD_CLIENT_ID || !process.env.DISCORD_CLIENT_SECRET || !process.env.DISCORD_CALLBACK_URL) {
+      return res.status(503).json({ error: "Discord auth is not configured" });
+    }
+    // Continue into passport
+    return passport.authenticate("discord")(req, res, next);
+  });
+
+  app.get(
+    "/api/auth/discord/callback",
+    (req: Request, res: Response, next: NextFunction) => {
+      if (!process.env.DISCORD_CLIENT_ID || !process.env.DISCORD_CLIENT_SECRET || !process.env.DISCORD_CALLBACK_URL) {
+        return res.status(503).json({ error: "Discord auth is not configured" });
+      }
+      return passport.authenticate("discord", { failureRedirect: "/" })(req, res, next);
+    },
+    async (req: Request, res: Response) => {
+      const user = req.user as any;
+      // Prevent session fixation by regenerating the session on login
+      req.session.regenerate((err) => {
+        if (err) {
+          return res.status(500).json({ error: "Login failed" });
+        }
+        if (user?.id) {
+          req.session.userId = user.id;
+          req.session.isAdmin = Boolean(user.isAdmin);
+        }
+        req.session.save(() => res.redirect("/"));
+      });
+    },
+  );
+
+  app.post("/api/auth/logout", (req: Request, res: Response) => {
+    req.session.destroy((err) => {
+      if (err) return res.status(500).json({ error: "Logout failed" });
+      res.json({ success: true });
+    });
+  });
+  
+  // ============ ADMIN AUTH ============
+  
+  // Admin login (rate limited)
+  app.post("/api/admin/login", adminLoginLimiter, async (req: Request, res: Response) => {
+    try {
+      const { password } = req.body;
+      const adminSecret = process.env.ADMIN_SECRET;
+      
+      if (!adminSecret) {
+        return res.status(503).json({ error: "Admin not configured" });
+      }
+      
+      if (password === adminSecret) {
+        req.session.regenerate((err) => {
+          if (err) {
+            return res.status(500).json({ error: "Login failed" });
+          }
+          req.session.isAdmin = true;
+          req.session.save((err) => {
+            if (err) {
+              return res.status(500).json({ error: "Login failed" });
+            }
+            return res.json({ success: true });
+          });
+        });
+        return;
+      }
+      
+      return res.status(401).json({ error: "Invalid password" });
+    } catch (error) {
+      res.status(500).json({ error: "Login failed" });
+    }
+  });
+  
+  // Admin logout
+  app.post("/api/admin/logout", (req: Request, res: Response) => {
+    req.session.destroy((err) => {
+      if (err) {
+        return res.status(500).json({ error: "Logout failed" });
+      }
+      res.json({ success: true });
+    });
+  });
+  
+  // Check admin status
+  app.get("/api/admin/me", (req: Request, res: Response) => {
+    res.json({ isAdmin: req.session?.isAdmin || false });
+  });
+  
+  // ============ CASINOS ============
+  
+  // Get all active casinos
+  app.get("/api/casinos", async (req: Request, res: Response) => {
+    try {
+      const casinos = await storage.getCasinos();
+      res.json(casinos);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch casinos" });
+    }
+  });
+
+  // Get single casino
+  app.get("/api/casinos/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const casino = await storage.getCasino(id);
+      if (!casino) {
+        return res.status(404).json({ error: "Casino not found" });
+      }
+      res.json(casino);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch casino" });
+    }
+  });
+
+  // Get all casinos including inactive (admin only)
+  app.get("/api/admin/casinos", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const casinos = await storage.getAllCasinos();
+      res.json(casinos);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch casinos" });
+    }
+  });
+
+  // Create casino (admin only)
+  app.post("/api/admin/casinos", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const data = insertCasinoSchema.parse(req.body);
+      const casino = await storage.createCasino(data);
+      res.status(201).json(casino);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to create casino" });
+    }
+  });
+
+  // Update casino (admin only)
+  app.patch("/api/admin/casinos/:id", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const data = insertCasinoSchema.partial().parse(req.body);
+      const casino = await storage.updateCasino(id, data);
+      if (!casino) {
+        return res.status(404).json({ error: "Casino not found" });
+      }
+      res.json(casino);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to update casino" });
+    }
+  });
+
+  // Delete casino (admin only)
+  app.delete("/api/admin/casinos/:id", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteCasino(id);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete casino" });
+    }
+  });
+
+  // ============ GIVEAWAYS ============
+  
+  // Get all giveaways
+  app.get("/api/giveaways", async (req: Request, res: Response) => {
+    try {
+      const giveaways = await storage.getGiveaways();
+      const giveawaysWithDetails = await Promise.all(
+        giveaways.map(async (g) => ({
+          ...g,
+          entries: await storage.getGiveawayEntryCount(g.id),
+          requirements: await storage.getGiveawayRequirements(g.id),
+        }))
+      );
+      res.json(giveawaysWithDetails);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch giveaways" });
+    }
+  });
+
+  // Get active giveaways
+  app.get("/api/giveaways/active", async (req: Request, res: Response) => {
+    try {
+      const giveaways = await storage.getActiveGiveaways();
+      const giveawaysWithDetails = await Promise.all(
+        giveaways.map(async (g) => ({
+          ...g,
+          entries: await storage.getGiveawayEntryCount(g.id),
+          requirements: await storage.getGiveawayRequirements(g.id),
+        }))
+      );
+      res.json(giveawaysWithDetails);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch active giveaways" });
+    }
+  });
+
+  // Get single giveaway
+  app.get("/api/giveaways/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const giveaway = await storage.getGiveaway(id);
+      if (!giveaway) {
+        return res.status(404).json({ error: "Giveaway not found" });
+      }
+      const entries = await storage.getGiveawayEntryCount(id);
+      const requirements = await storage.getGiveawayRequirements(id);
+      res.json({ ...giveaway, entries, requirements });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch giveaway" });
+    }
+  });
+
+  // Create giveaway (admin only)
+  app.post("/api/admin/giveaways", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const { requirements, ...giveawayData } = req.body;
+      const data = insertGiveawaySchema.parse(giveawayData);
+      const giveaway = await storage.createGiveaway(data);
+      
+      if (requirements && Array.isArray(requirements)) {
+        await storage.setGiveawayRequirements(giveaway.id, requirements);
+      }
+      
+      const reqs = await storage.getGiveawayRequirements(giveaway.id);
+      res.status(201).json({ ...giveaway, requirements: reqs });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to create giveaway" });
+    }
+  });
+
+  // Update giveaway (admin only)
+  app.patch("/api/admin/giveaways/:id", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const { requirements, ...giveawayData } = req.body;
+      const data = insertGiveawaySchema.partial().parse(giveawayData);
+      const giveaway = await storage.updateGiveaway(id, data);
+      if (!giveaway) {
+        return res.status(404).json({ error: "Giveaway not found" });
+      }
+      
+      if (requirements !== undefined && Array.isArray(requirements)) {
+        await storage.setGiveawayRequirements(id, requirements);
+      }
+      
+      const reqs = await storage.getGiveawayRequirements(id);
+      res.json({ ...giveaway, requirements: reqs });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to update giveaway" });
+    }
+  });
+
+  // Delete giveaway (admin only)
+  app.delete("/api/admin/giveaways/:id", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteGiveaway(id);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete giveaway" });
+    }
+  });
+
+  // Enter giveaway (requires logged-in user; userId is taken from session)
+  app.post("/api/giveaways/:id/enter", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const giveawayId = parseInt(req.params.id);
+      const userId = req.session!.userId!;
+
+      // Check if giveaway exists and is active
+      const giveaway = await storage.getGiveaway(giveawayId);
+      if (!giveaway) {
+        return res.status(404).json({ error: "Giveaway not found" });
+      }
+      if (!giveaway.isActive || new Date(giveaway.endsAt) < new Date()) {
+        return res.status(400).json({ error: "Giveaway is not active" });
+      }
+
+      // Check if user already entered
+      const hasEntered = await storage.hasUserEntered(giveawayId, userId);
+      if (hasEntered) {
+        return res.status(400).json({ error: "Already entered this giveaway" });
+      }
+
+      // Enforce requirements (minimal implementation)
+      const requirements = await storage.getGiveawayRequirements(giveawayId);
+      for (const r of requirements) {
+        if (r.type === "discord") {
+          // Already satisfied if logged in via Discord
+          continue;
+        }
+        if (r.type === "linked_account") {
+          const accounts = await storage.getUserCasinoAccounts(userId);
+          const ok = accounts.some(a => (r.casinoId ? a.casinoId === r.casinoId : true) && a.verified);
+          if (!ok) return res.status(403).json({ error: "Requirement not met: linked casino account" });
+        }
+        if (r.type === "vip") {
+          // VIP status not implemented in this codebase
+          return res.status(501).json({ error: "Requirement type not implemented: vip" });
+        }
+        if (r.type === "wager") {
+          // Wager checks require external casino integration (not implemented)
+          return res.status(501).json({ error: "Requirement type not implemented: wager" });
+        }
+      }
+
+      // Check max entries
+      if (giveaway.maxEntries) {
+        const currentEntries = await storage.getGiveawayEntryCount(giveawayId);
+        if (currentEntries >= giveaway.maxEntries) {
+          return res.status(400).json({ error: "Giveaway is full" });
+        }
+      }
+
+      const entry = await storage.createGiveawayEntry({ giveawayId, userId });
+      res.status(201).json(entry);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to enter giveaway" });
+    }
+  });
+
+  // ============ USER PROFILE ============
+  
+  // Get user profile with accounts and wallets
+  app.get("/api/users/:id", requireAuth, requireSelfOrAdmin, async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id;
+      const user = await storage.getUser(id);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const casinoAccounts = await storage.getUserCasinoAccounts(id);
+      const wallets = await storage.getUserWallets(id);
+      res.json({ ...user, casinoAccounts, wallets });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch user" });
+    }
+  });
+
+  // Update user profile
+  app.patch("/api/users/:id", requireAuth, requireSelfOrAdmin, async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id;
+      const { kickUsername, kickVerified } = req.body;
+      const data: any = {};
+      if (kickUsername !== undefined) data.kickUsername = kickUsername;
+      // Only admins can set kickVerified
+      if (kickVerified !== undefined) {
+        if (!req.session?.isAdmin) {
+          return res.status(403).json({ error: "Forbidden" });
+        }
+        data.kickVerified = Boolean(kickVerified);
+      }
+      const user = await storage.updateUser(id, data);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json(user);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update user" });
+    }
+  });
+
+  // Add casino account for user
+  app.post("/api/users/:id/casino-accounts", requireAuth, requireSelfOrAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = req.params.id;
+      const data = insertUserCasinoAccountSchema.parse({ ...req.body, userId });
+      const account = await storage.createUserCasinoAccount(data);
+      res.status(201).json(account);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to add casino account" });
+    }
+  });
+
+  // Update casino account
+  // Updating/deleting by ID is admin-only until per-record ownership checks are implemented
+  app.patch("/api/casino-accounts/:id", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const data = insertUserCasinoAccountSchema.partial().parse(req.body);
+      const account = await storage.updateUserCasinoAccount(id, data);
+      if (!account) {
+        return res.status(404).json({ error: "Casino account not found" });
+      }
+      res.json(account);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to update casino account" });
+    }
+  });
+
+  // Delete casino account
+  app.delete("/api/casino-accounts/:id", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteUserCasinoAccount(id);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete casino account" });
+    }
+  });
+
+  // Add wallet for user
+  app.post("/api/users/:id/wallets", requireAuth, requireSelfOrAdmin, async (req: Request, res: Response) => {
+    try {
+      const userId = req.params.id;
+      const data = insertUserWalletSchema.parse({ ...req.body, userId });
+      const wallet = await storage.createUserWallet(data);
+      res.status(201).json(wallet);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to add wallet" });
+    }
+  });
+
+  // Update wallet
+  app.patch("/api/wallets/:id", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const data = insertUserWalletSchema.partial().parse(req.body);
+      const wallet = await storage.updateUserWallet(id, data);
+      if (!wallet) {
+        return res.status(404).json({ error: "Wallet not found" });
+      }
+      res.json(wallet);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to update wallet" });
+    }
+  });
+
+  // Delete wallet
+  app.delete("/api/wallets/:id", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteUserWallet(id);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete wallet" });
+    }
+  });
+
+  // ============ LEADERBOARD ============
+  
+  // Get leaderboard data (pulls from configured APIs)
+  app.get("/api/leaderboard/:casinoSlug/:period", async (req: Request, res: Response) => {
+    try {
+      const { casinoSlug, period } = req.params;
+      const casino = await storage.getCasinoBySlug(casinoSlug);
+      
+      if (!casino) {
+        return res.status(404).json({ error: "Casino not found" });
+      }
+
+      // If no API configured, return empty placeholder
+      if (!casino.leaderboardApiUrl) {
+        return res.json({ 
+          casino: casino.name,
+          period,
+          data: [],
+          message: "Leaderboard API not configured for this casino"
+        });
+      }
+
+      // In production, you'd fetch from the configured API
+      // For now, return placeholder indicating API is configured
+      res.json({
+        casino: casino.name,
+        period,
+        apiConfigured: true,
+        apiUrl: casino.leaderboardApiUrl,
+        data: []
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch leaderboard" });
+    }
+  });
+
+  // ============ ADMIN USER MANAGEMENT ============
+  
+  // Get all users (admin only)
+  app.get("/api/admin/users", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const search = req.query.search as string | undefined;
+      const users = search 
+        ? await storage.searchUsers(search)
+        : await storage.getAllUsers();
+      res.json(users);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+
+  // Get user full details (admin only)
+  app.get("/api/admin/users/:id", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = req.params.id;
+      const details = await storage.getUserFullDetails(id);
+      if (!details) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json(details);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch user details" });
+    }
+  });
+
+  // Add payment for user (admin only)
+  app.post("/api/admin/users/:id/payments", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.params.id;
+      const data = insertUserPaymentSchema.parse({ ...req.body, userId });
+      const payment = await storage.createUserPayment(data);
+      res.status(201).json(payment);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to add payment" });
+    }
+  });
+
+  // Get user payments (admin only)
+  app.get("/api/admin/users/:id/payments", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.params.id;
+      const payments = await storage.getUserPayments(userId);
+      const total = await storage.getUserTotalPayments(userId);
+      res.json({ payments, total });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch payments" });
+    }
+  });
+
+  // ============ STREAM EVENTS ============
+  
+  // Get all stream events (optionally filter by type)
+  app.get("/api/admin/stream-events", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const type = req.query.type as string | undefined;
+      const events = await storage.getStreamEvents(type);
+      const eventsWithEntries = await Promise.all(
+        events.map(async (e) => ({
+          ...e,
+          entries: await storage.getStreamEventEntries(e.id),
+          brackets: e.type === "tournament" ? await storage.getTournamentBrackets(e.id) : [],
+        }))
+      );
+      res.json(eventsWithEntries);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch stream events" });
+    }
+  });
+
+  // Get single stream event with all details
+  app.get("/api/admin/stream-events/:id", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const event = await storage.getStreamEvent(id);
+      if (!event) {
+        return res.status(404).json({ error: "Stream event not found" });
+      }
+      const entries = await storage.getStreamEventEntries(id);
+      const brackets = event.type === "tournament" ? await storage.getTournamentBrackets(id) : [];
+      res.json({ ...event, entries, brackets });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch stream event" });
+    }
+  });
+
+  // Create stream event
+  app.post("/api/admin/stream-events", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const data = insertStreamEventSchema.parse(req.body);
+      const seed = crypto.randomBytes(16).toString("hex");
+      const event = await storage.createStreamEvent({ ...data, seed });
+      res.status(201).json(event);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to create stream event" });
+    }
+  });
+
+  // Update stream event
+  app.patch("/api/admin/stream-events/:id", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const data = insertStreamEventSchema.partial().parse(req.body);
+      const event = await storage.updateStreamEvent(id, data);
+      if (!event) {
+        return res.status(404).json({ error: "Stream event not found" });
+      }
+      res.json(event);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to update stream event" });
+    }
+  });
+
+  // Delete stream event
+  app.delete("/api/admin/stream-events/:id", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteStreamEvent(id);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete stream event" });
+    }
+  });
+
+  // Add entry to stream event
+  app.post("/api/admin/stream-events/:id/entries", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const eventId = parseInt(req.params.id);
+      const event = await storage.getStreamEvent(eventId);
+      if (!event) {
+        return res.status(404).json({ error: "Stream event not found" });
+      }
+      if (event.status !== "open") {
+        return res.status(400).json({ error: "Event is not open for entries" });
+      }
+      const data = insertStreamEventEntrySchema.parse({ ...req.body, eventId });
+      const entry = await storage.createStreamEventEntry(data);
+      res.status(201).json(entry);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ error: error.errors });
+      }
+      res.status(500).json({ error: "Failed to add entry" });
+    }
+  });
+
+  // Delete entry from stream event
+  app.delete("/api/admin/stream-events/:eventId/entries/:entryId", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const entryId = parseInt(req.params.entryId);
+      await storage.deleteStreamEventEntry(entryId);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete entry" });
+    }
+  });
+
+  // Close entries and randomize players for tournament
+  app.post("/api/admin/stream-events/:id/lock", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const event = await storage.getStreamEvent(id);
+      if (!event) {
+        return res.status(404).json({ error: "Stream event not found" });
+      }
+      if (event.status !== "open") {
+        return res.status(400).json({ error: "Event must be open to lock entries" });
+      }
+      
+      const entries = await storage.getStreamEventEntries(id);
+
+      const shuffle = <T,>(arr: T[]): T[] => {
+        // Fisher-Yates shuffle using crypto RNG
+        const a = [...arr];
+        for (let i = a.length - 1; i > 0; i--) {
+          const j = crypto.randomInt(0, i + 1);
+          [a[i], a[j]] = [a[j], a[i]];
+        }
+        return a;
+      };
+      
+      if (event.type === "tournament") {
+        const maxPlayers = event.maxPlayers || 8;
+        
+        // Shuffle entries using crypto RNG
+        const shuffled = shuffle(entries);
+        const selected = shuffled.slice(0, maxPlayers);
+        
+        // Mark selected players
+        for (let i = 0; i < entries.length; i++) {
+          const entry = entries[i];
+          const isSelected = selected.some(s => s.id === entry.id);
+          await storage.updateStreamEventEntry(entry.id, {
+            status: isSelected ? "selected" : "eliminated",
+            seed: isSelected ? selected.findIndex(s => s.id === entry.id) : null,
+          });
+        }
+        
+        // Generate bracket
+        await storage.clearTournamentBrackets(id);
+        const numPlayers = selected.length;
+        const numRounds = Math.ceil(Math.log2(numPlayers));
+        
+        // First round matches
+        const shuffledSelected = shuffle(selected);
+        for (let i = 0; i < Math.ceil(numPlayers / 2); i++) {
+          const playerA = shuffledSelected[i * 2];
+          const playerB = shuffledSelected[i * 2 + 1] || null;
+          await storage.createTournamentBracket({
+            eventId: id,
+            round: 1,
+            matchIndex: i,
+            playerAId: playerA.id,
+            playerBId: playerB?.id || null,
+            winnerId: playerB ? null : playerA.id, // Bye
+            status: playerB ? "scheduled" : "resolved",
+          });
+        }
+        
+        // Create empty brackets for subsequent rounds
+        for (let round = 2; round <= numRounds; round++) {
+          const matchesInRound = Math.ceil(numPlayers / Math.pow(2, round));
+          for (let i = 0; i < matchesInRound; i++) {
+            await storage.createTournamentBracket({
+              eventId: id,
+              round,
+              matchIndex: i,
+              playerAId: null,
+              playerBId: null,
+              winnerId: null,
+              status: "scheduled",
+            });
+          }
+        }
+      } else if (event.type === "bonus_hunt") {
+        // For bonus hunt, mark all as waiting and pick first random entry
+        for (const entry of entries) {
+          await storage.updateStreamEventEntry(entry.id, { status: "waiting" });
+        }
+        
+        if (entries.length > 0) {
+          const randomIndex = crypto.randomInt(0, entries.length);
+          await storage.updateStreamEventEntry(entries[randomIndex].id, { status: "current" });
+          await storage.updateStreamEvent(id, { currentEntryId: entries[randomIndex].id });
+        }
+      }
+      
+      const updated = await storage.updateStreamEvent(id, { status: "locked" });
+      const updatedEntries = await storage.getStreamEventEntries(id);
+      const brackets = event.type === "tournament" ? await storage.getTournamentBrackets(id) : [];
+      
+      res.json({ ...updated, entries: updatedEntries, brackets });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to lock event" });
+    }
+  });
+
+  // Start event (set to in_progress)
+  app.post("/api/admin/stream-events/:id/start", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const event = await storage.getStreamEvent(id);
+      if (!event) {
+        return res.status(404).json({ error: "Stream event not found" });
+      }
+      if (event.status !== "locked") {
+        return res.status(400).json({ error: "Event must be locked before starting" });
+      }
+      
+      const updated = await storage.updateStreamEvent(id, { status: "in_progress" });
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to start event" });
+    }
+  });
+
+  // Complete event
+  app.post("/api/admin/stream-events/:id/complete", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const updated = await storage.updateStreamEvent(id, { status: "completed" });
+      if (!updated) {
+        return res.status(404).json({ error: "Stream event not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to complete event" });
+    }
+  });
+
+  // Update tournament bracket match result
+  app.patch("/api/admin/stream-events/:eventId/brackets/:bracketId", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const bracketId = parseInt(req.params.bracketId);
+      const { winnerId } = req.body;
+      
+      const bracket = await storage.updateTournamentBracket(bracketId, {
+        winnerId,
+        status: "resolved",
+      });
+      
+      if (!bracket) {
+        return res.status(404).json({ error: "Bracket not found" });
+      }
+      
+      // Advance winner to next round
+      const allBrackets = await storage.getTournamentBrackets(bracket.eventId);
+      const nextRoundBrackets = allBrackets.filter(b => b.round === bracket.round + 1);
+      
+      if (nextRoundBrackets.length > 0) {
+        const nextMatchIndex = Math.floor(bracket.matchIndex / 2);
+        const nextMatch = nextRoundBrackets.find(b => b.matchIndex === nextMatchIndex);
+        
+        if (nextMatch) {
+          const isFirstSlot = bracket.matchIndex % 2 === 0;
+          await storage.updateTournamentBracket(nextMatch.id, {
+            [isFirstSlot ? "playerAId" : "playerBId"]: winnerId,
+          });
+        }
+      }
+      
+      res.json(bracket);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update bracket" });
+    }
+  });
+
+  // Bonus Hunt: Mark current slot as bonused
+  app.post("/api/admin/stream-events/:id/bonus/bonused", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const event = await storage.getStreamEvent(id);
+      if (!event || event.type !== "bonus_hunt") {
+        return res.status(404).json({ error: "Bonus hunt not found" });
+      }
+      
+      if (event.currentEntryId) {
+        await storage.updateStreamEventEntry(event.currentEntryId, { status: "bonused" });
+      }
+      
+      // Pick next random waiting entry
+      const entries = await storage.getStreamEventEntries(id);
+      const waiting = entries.filter(e => e.status === "waiting");
+      
+      if (waiting.length > 0) {
+        const randomIndex = crypto.randomInt(0, waiting.length);
+        await storage.updateStreamEventEntry(waiting[randomIndex].id, { status: "current" });
+        await storage.updateStreamEvent(id, { currentEntryId: waiting[randomIndex].id });
+      } else {
+        await storage.updateStreamEvent(id, { currentEntryId: null });
+      }
+      
+      const updatedEvent = await storage.getStreamEvent(id);
+      const updatedEntries = await storage.getStreamEventEntries(id);
+      res.json({ ...updatedEvent, entries: updatedEntries });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to mark as bonused" });
+    }
+  });
+
+  // Bonus Hunt: Mark current slot as no bonus (remove)
+  app.post("/api/admin/stream-events/:id/bonus/no-bonus", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const event = await storage.getStreamEvent(id);
+      if (!event || event.type !== "bonus_hunt") {
+        return res.status(404).json({ error: "Bonus hunt not found" });
+      }
+      
+      if (event.currentEntryId) {
+        await storage.updateStreamEventEntry(event.currentEntryId, { status: "removed" });
+      }
+      
+      // Pick next random waiting entry
+      const entries = await storage.getStreamEventEntries(id);
+      const waiting = entries.filter(e => e.status === "waiting");
+      
+      if (waiting.length > 0) {
+        const randomIndex = crypto.randomInt(0, waiting.length);
+        await storage.updateStreamEventEntry(waiting[randomIndex].id, { status: "current" });
+        await storage.updateStreamEvent(id, { currentEntryId: waiting[randomIndex].id });
+      } else {
+        await storage.updateStreamEvent(id, { currentEntryId: null });
+      }
+      
+      const updatedEvent = await storage.getStreamEvent(id);
+      const updatedEntries = await storage.getStreamEventEntries(id);
+      res.json({ ...updatedEvent, entries: updatedEntries });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to mark as no bonus" });
+    }
+  });
+
+  // Bonus Hunt: Update payout for bonused entry
+  app.patch("/api/admin/stream-events/:eventId/entries/:entryId/payout", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const entryId = parseInt(req.params.entryId);
+      const { payout } = req.body;
+      
+      const entry = await storage.updateStreamEventEntry(entryId, { payout: payout.toString() });
+      if (!entry) {
+        return res.status(404).json({ error: "Entry not found" });
+      }
+      res.json(entry);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update payout" });
+    }
+  });
+
+  return httpServer;
+}
