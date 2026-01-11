@@ -1,5 +1,5 @@
 import express, { type Request, Response, NextFunction } from "express";
-import session from "express-session";
+import session, { type Store as SessionStore } from "express-session";
 import MemoryStore from "memorystore";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
@@ -38,53 +38,37 @@ if (!sessionSecret) {
   throw new Error("SESSION_SECRET environment variable is required");
 }
 
-app.use(
-  session({
-    secret: sessionSecret,
-    resave: false,
-    saveUninitialized: false,
-    store: process.env.DATABASE_URL
-      ? new PgSessionStore({
-          pool: new pg.Pool({ connectionString: process.env.DATABASE_URL }),
-          tableName: "session",
-        })
-      : new MemoryStoreSession({
-          checkPeriod: 86400000,
-        }),
-    cookie: {
-      secure: process.env.NODE_ENV === "production",
-      httpOnly: true,
-      sameSite: "lax",
-      maxAge: 24 * 60 * 60 * 1000,
-    },
-  })
-);
+const pgPool = process.env.DATABASE_URL
+  ? new pg.Pool({ connectionString: process.env.DATABASE_URL })
+  : null;
 
-// Baseline security headers
-app.use(
-  helmet({
-    contentSecurityPolicy: false, // SPA assets vary; consider tightening later.
-  })
-);
+async function ensureSessionTable(pool: pg.Pool) {
+  // connect-pg-simple expects a table named "session"
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS "session" (
+      "sid" varchar NOT NULL,
+      "sess" json NOT NULL,
+      "expire" timestamp(6) NOT NULL
+    );
+  `);
 
-// Basic rate limiting for the whole API (admin login has its own stricter limiter)
-app.use(
-  "/api",
-  rateLimit({
-    windowMs: 60_000,
-    limit: 300,
-    standardHeaders: true,
-    legacyHeaders: false,
-  })
-);
+  // Add primary key only if missing
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'session_pkey'
+      ) THEN
+        ALTER TABLE "session" ADD CONSTRAINT "session_pkey" PRIMARY KEY ("sid");
+      END IF;
+    END $$;
+  `);
 
-app.use(
-  express.json({
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
-  }),
-);
+  // Helpful index for cleanup queries
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" ("expire");
+  `);
+}
 
 app.use(express.urlencoded({ extended: false }));
 
@@ -114,6 +98,48 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+// Initialize session store (Postgres in production, memory in dev) and self-heal missing tables.
+const sessionStore = (() => {
+  const memory = new MemoryStoreSession({ checkPeriod: 86400000 });
+
+  if (!pgPool) return memory;
+
+  // We'll return a placeholder for now; actual init happens below.
+  return memory as unknown as SessionStore;
+})();
+
+let store: SessionStore = sessionStore;
+
+if (pgPool) {
+  try {
+    await ensureSessionTable(pgPool);
+    log("✅ session table ready", "db");
+
+    store = new PgSessionStore({
+      pool: pgPool,
+      tableName: "session",
+    });
+  } catch (err) {
+    console.error("⚠️ Failed to initialize session table/store; falling back to in-memory sessions.", err);
+    store = new MemoryStoreSession({ checkPeriod: 86400000 });
+  }
+}
+
+app.use(
+  session({
+    secret: sessionSecret,
+    resave: false,
+    saveUninitialized: false,
+    store,
+    cookie: {
+      secure: process.env.NODE_ENV === "production",
+      httpOnly: true,
+      sameSite: "lax",
+      maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
+    },
+  }),
+);
+
   // Passport strategies + session integration
   setupAuth(app);
 
