@@ -3,6 +3,9 @@ import { pgTable, text, varchar, integer, boolean, timestamp, serial, numeric } 
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
+// NOTE: This app stores some flexible configuration as JSON strings (text columns).
+// That keeps partner/API integrations easy to add without constant migrations.
+
 // Valid tier options including "none"
 export const CASINO_TIERS = ["platinum", "gold", "silver", "none"] as const;
 export type CasinoTier = typeof CASINO_TIERS[number];
@@ -158,6 +161,63 @@ export const leaderboardCache = pgTable("leaderboard_cache", {
   fetchedAt: timestamp("fetched_at").defaultNow(),
 });
 
+// Site settings (simple CMS controlled from the admin panel)
+export const siteSettings = pgTable("site_settings", {
+  id: serial("id").primaryKey(),
+  key: text("key").notNull().unique(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Partner Leaderboards (configured per-casino and fetched server-side)
+// Mapping is stored as JSON string for maximum flexibility.
+export const leaderboards = pgTable("leaderboards", {
+  id: serial("id").primaryKey(),
+  casinoId: integer("casino_id").notNull().references(() => casinos.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+
+  // Period configuration
+  periodType: text("period_type").notNull().default("monthly"), // weekly|biweekly|monthly|custom
+  durationDays: integer("duration_days").notNull().default(30),
+  startAt: timestamp("start_at").notNull(),
+  endAt: timestamp("end_at"),
+
+  // Fetch configuration
+  apiEndpoint: text("api_endpoint").notNull(),
+  apiMethod: text("api_method").notNull().default("GET"),
+  apiHeadersJson: text("api_headers_json"),
+  apiBodyJson: text("api_body_json"),
+  apiQueryJson: text("api_query_json"),
+
+  // Response mapping: { itemsPath, rankField?, usernameField, externalUserIdField?, valueField }
+  apiMappingJson: text("api_mapping_json").notNull(),
+  refreshIntervalSec: integer("refresh_interval_sec").notNull().default(300),
+  isActive: boolean("is_active").notNull().default(true),
+  lastFetchedAt: timestamp("last_fetched_at"),
+  lastFetchError: text("last_fetch_error"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const leaderboardEntries = pgTable("leaderboard_entries", {
+  id: serial("id").primaryKey(),
+  leaderboardId: integer("leaderboard_id").notNull().references(() => leaderboards.id, { onDelete: "cascade" }),
+  rank: integer("rank").notNull(),
+  username: text("username").notNull(),
+  externalUserId: text("external_user_id"),
+  value: numeric("value", { precision: 18, scale: 6 }).notNull().default("0"),
+  rawDataJson: text("raw_data_json"),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const leaderboardsRelations = relations(leaderboards, ({ one, many }) => ({
+  casino: one(casinos, { fields: [leaderboards.casinoId], references: [casinos.id] }),
+  entries: many(leaderboardEntries),
+}));
+
+export const leaderboardEntriesRelations = relations(leaderboardEntries, ({ one }) => ({
+  leaderboard: one(leaderboards, { fields: [leaderboardEntries.leaderboardId], references: [leaderboards.id] }),
+}));
+
 // Stream Event Types
 export const STREAM_EVENT_TYPES = ["tournament", "bonus_hunt", "guess_balance"] as const;
 export type StreamEventType = typeof STREAM_EVENT_TYPES[number];
@@ -233,6 +293,16 @@ export const insertStreamEventSchema = createInsertSchema(streamEvents).omit({ i
 export const insertStreamEventEntrySchema = createInsertSchema(streamEventEntries).omit({ id: true, createdAt: true });
 export const insertTournamentBracketSchema = createInsertSchema(tournamentBrackets).omit({ id: true, createdAt: true });
 
+export const insertSiteSettingSchema = createInsertSchema(siteSettings).omit({ id: true, updatedAt: true });
+
+export const insertLeaderboardSchema = createInsertSchema(leaderboards).omit({ id: true, createdAt: true, lastFetchedAt: true }).extend({
+  periodType: z.enum(["weekly", "biweekly", "monthly", "custom"]).default("monthly"),
+  durationDays: z.coerce.number().int().min(1).default(30),
+  refreshIntervalSec: z.coerce.number().int().min(30).default(300),
+});
+
+export const insertLeaderboardEntrySchema = createInsertSchema(leaderboardEntries).omit({ id: true, updatedAt: true });
+
 // Types
 export type Casino = typeof casinos.$inferSelect;
 export type InsertCasino = z.infer<typeof insertCasinoSchema>;
@@ -256,3 +326,11 @@ export type StreamEventEntry = typeof streamEventEntries.$inferSelect;
 export type InsertStreamEventEntry = z.infer<typeof insertStreamEventEntrySchema>;
 export type TournamentBracket = typeof tournamentBrackets.$inferSelect;
 export type InsertTournamentBracket = z.infer<typeof insertTournamentBracketSchema>;
+
+export type SiteSetting = typeof siteSettings.$inferSelect;
+export type InsertSiteSetting = z.infer<typeof insertSiteSettingSchema>;
+
+export type Leaderboard = typeof leaderboards.$inferSelect;
+export type InsertLeaderboard = z.infer<typeof insertLeaderboardSchema>;
+export type LeaderboardEntry = typeof leaderboardEntries.$inferSelect;
+export type InsertLeaderboardEntry = z.infer<typeof insertLeaderboardEntrySchema>;

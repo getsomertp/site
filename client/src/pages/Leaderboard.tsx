@@ -20,10 +20,10 @@ type LeaderboardEntry = {
 };
 
 type LeaderboardData = {
+  leaderboardName: string;
   casino: string;
   period: string;
   data: LeaderboardEntry[];
-  apiConfigured?: boolean;
 };
 
 function getRankIcon(rank: number) {
@@ -57,19 +57,44 @@ export default function Leaderboard() {
     queryKey: ["/api/casinos"],
   });
 
-  const activeCasinos = casinos.filter(c => c.leaderboardApiUrl);
+  const { data: activeLeaderboards = [], isLoading: loadingLeaderboards } = useQuery<any[]>({
+    queryKey: ["/api/leaderboards/active"],
+  });
+
+  const activeCasinos = casinos.filter(c => c.isActive);
   const selectedCasino = casinos.find(c => c.slug === selectedCasinoSlug) || activeCasinos[0];
 
-  const { data: leaderboardData, isLoading: loadingLeaderboard } = useQuery<LeaderboardData>({
-    queryKey: ["/api/leaderboard", selectedCasino?.slug, period],
+  const selectedLb = activeLeaderboards.find((lb: any) => lb.periodType === period && (!selectedCasino || lb.casinoId === selectedCasino.id))
+    || activeLeaderboards.find((lb: any) => !selectedCasino || lb.casinoId === selectedCasino.id);
+
+
+  const { data: leaderboardEntries = [], isLoading: loadingLeaderboard } = useQuery<any[]>({
+    queryKey: ["/api/leaderboards", selectedLb?.id, "entries"],
     queryFn: async () => {
-      if (!selectedCasino) return { casino: "", period, data: [] };
-      const res = await fetch(`/api/leaderboard/${selectedCasino.slug}/${period}`);
-      if (!res.ok) throw new Error("Failed to fetch leaderboard");
+      if (!selectedLb?.id) return [];
+      const res = await fetch(`/api/leaderboards/${selectedLb.id}/entries`);
+      if (!res.ok) throw new Error("Failed to fetch leaderboard entries");
       return res.json();
     },
-    enabled: !!selectedCasino,
+    enabled: !!selectedLb?.id,
   });
+
+  const leaderboardData: LeaderboardData | undefined = selectedLb
+    ? {
+        leaderboardName: selectedLb.name,
+        casino: selectedLb.casinoName || selectedCasino?.name || "",
+        period: selectedLb.periodType,
+        data: (leaderboardEntries || []).map((e: any) => ({
+          rank: e.rank,
+          username: e.username,
+          odId: e.userId || undefined,
+          wagered: Number(e.value ?? 0),
+          prize: "",
+          avatar: "",
+          change: "",
+        })),
+      }
+    : undefined;
 
   const prizePool = period === "monthly" ? "$150,000" : period === "weekly" ? "$25,000" : "Eternal Glory";
 

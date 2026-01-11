@@ -11,7 +11,9 @@ import {
   insertUserWalletSchema,
   insertUserPaymentSchema,
   insertStreamEventSchema,
-  insertStreamEventEntrySchema
+  insertStreamEventEntrySchema,
+  insertSiteSettingSchema,
+  insertLeaderboardSchema
 } from "@shared/schema";
 import { z } from "zod";
 
@@ -274,6 +276,120 @@ export async function registerRoutes(
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ error: "Failed to delete casino" });
+    }
+  });
+
+  // ============ SITE SETTINGS (CMS) ============
+  // Public: minimal settings for buttons/links
+  app.get("/api/site/settings", async (_req: Request, res: Response) => {
+    try {
+      const rows = await storage.getSiteSettings();
+      const out: Record<string, string> = {};
+      for (const r of rows) out[r.key] = r.value;
+      res.json(out);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch site settings" });
+    }
+  });
+
+  // Admin: list + upsert settings
+  app.get("/api/admin/site/settings", adminAuth, async (_req: Request, res: Response) => {
+    try {
+      const rows = await storage.getSiteSettings();
+      res.json(rows);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch site settings" });
+    }
+  });
+
+  app.post("/api/admin/site/settings", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const data = insertSiteSettingSchema.parse(req.body);
+      const row = await storage.upsertSiteSetting(data);
+      res.status(201).json(row);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      res.status(500).json({ error: "Failed to upsert site setting" });
+    }
+  });
+
+  // ============ LEADERBOARDS (per partner) ============
+  // Public: list active leaderboards (no secrets)
+  app.get("/api/leaderboards/active", async (_req: Request, res: Response) => {
+    try {
+      const lbs = await storage.getActiveLeaderboards();
+      // Strip sensitive API config for public responses
+      const publicLbs = lbs.map((l) => ({
+        id: l.id,
+        casinoId: l.casinoId,
+        name: l.name,
+        periodType: l.periodType,
+        durationDays: l.durationDays,
+        startAt: l.startAt,
+        endAt: l.endAt,
+        refreshIntervalSec: l.refreshIntervalSec,
+        isActive: l.isActive,
+        lastFetchedAt: l.lastFetchedAt,
+        lastFetchError: l.lastFetchError,
+      }));
+      res.json(publicLbs);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch leaderboards" });
+    }
+  });
+
+  app.get("/api/leaderboards/:id/entries", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const limit = req.query.limit ? Math.min(500, Math.max(1, parseInt(String(req.query.limit)))) : 100;
+      const entries = await storage.getLeaderboardEntries(id, limit);
+      res.json(entries);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch leaderboard entries" });
+    }
+  });
+
+  // Admin CRUD
+  app.get("/api/admin/leaderboards", adminAuth, async (_req: Request, res: Response) => {
+    try {
+      const lbs = await storage.getLeaderboards(true);
+      res.json(lbs);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch leaderboards" });
+    }
+  });
+
+  app.post("/api/admin/leaderboards", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const data = insertLeaderboardSchema.parse(req.body);
+      const lb = await storage.createLeaderboard(data);
+      res.status(201).json(lb);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      res.status(500).json({ error: "Failed to create leaderboard" });
+    }
+  });
+
+  app.patch("/api/admin/leaderboards/:id", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      const data = insertLeaderboardSchema.partial().parse(req.body);
+      const lb = await storage.updateLeaderboard(id, data);
+      if (!lb) return res.status(404).json({ error: "Leaderboard not found" });
+      res.json(lb);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      res.status(500).json({ error: "Failed to update leaderboard" });
+    }
+  });
+
+  app.delete("/api/admin/leaderboards/:id", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      await storage.deleteLeaderboard(id);
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete leaderboard" });
     }
   });
 

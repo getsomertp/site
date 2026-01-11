@@ -1,4 +1,6 @@
 import { motion } from "framer-motion";
+import { useQuery } from "@tanstack/react-query";
+import { getQueryFn } from "@/lib/queryClient";
 import { Trophy, Gift, Users, Zap, ExternalLink, Star, Crown, Medal, Award } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -54,6 +56,59 @@ function getRankIcon(rank: number) {
 }
 
 export default function Home() {
+  const { data: siteSettings } = useQuery<Record<string, string>>({
+    queryKey: ["/api/site/settings"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  const kickUrl = siteSettings?.kickUrl || "https://kick.com/get-some";
+  const discordUrl = siteSettings?.discordUrl || "https://discord.gg/";
+
+  const { data: casinos } = useQuery<any[]>({
+    queryKey: ["/api/casinos"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  const sponsorsDynamic = (casinos || [])
+    .filter((c) => c.isActive)
+    .slice(0, 6)
+    .map((c) => ({
+      name: c.name,
+      tier: c.tier || "silver",
+      bonus: c.promoTitle || c.promoDescription || "",
+      url: c.url,
+    }));
+
+  const sponsorsList = sponsorsDynamic.length ? sponsorsDynamic : sponsors;
+
+  const { data: activeLeaderboards } = useQuery<any[]>({
+    queryKey: ["/api/leaderboards/active"],
+    queryFn: getQueryFn({ on401: "throw" }),
+  });
+
+  const primaryLb = activeLeaderboards?.[0];
+
+  const { data: primaryEntries } = useQuery<any[]>({
+    queryKey: primaryLb ? ["/api/leaderboards", primaryLb.id, "entries"] : ["/api/leaderboards", "none", "entries"],
+    queryFn: async ({ queryKey }) => {
+      const id = queryKey[1];
+      if (!id || id === "none") return [];
+      const res = await fetch(`/api/leaderboards/${id}/entries`, { credentials: "include" });
+      if (!res.ok) return [];
+      return (await res.json()) as any[];
+    },
+    enabled: !!primaryLb,
+  });
+
+  const leaderboardList = (primaryEntries && primaryEntries.length)
+    ? primaryEntries.slice(0, 5).map((e, idx) => ({
+        rank: e.rank ?? idx + 1,
+        username: e.username,
+        wagered: e.valueNumber ?? 0,
+        prize: "",
+        avatar: (e.username || "?").slice(0, 2).toUpperCase(),
+      }))
+    : leaderboardData;
   return (
     <div className="min-h-screen">
       <Navigation />
@@ -85,6 +140,7 @@ export default function Home() {
                 size="lg" 
                 className="font-display text-lg bg-gradient-to-r from-neon-purple to-neon-pink hover:opacity-90 text-white px-8 py-6 box-glow-purple"
                 data-testid="button-watch-live"
+                onClick={() => window.open(kickUrl, "_blank", "noopener,noreferrer")}
               >
                 <Zap className="mr-2" /> Watch Live
               </Button>
@@ -93,6 +149,7 @@ export default function Home() {
                 variant="outline"
                 className="font-display text-lg border-neon-gold text-neon-gold hover:bg-neon-gold hover:text-black px-8 py-6"
                 data-testid="button-join-discord"
+                onClick={() => window.open(discordUrl, "_blank", "noopener,noreferrer")}
               >
                 Join Discord
               </Button>
@@ -139,7 +196,7 @@ export default function Home() {
           </motion.div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {sponsors.map((sponsor, i) => (
+            {sponsorsList.map((sponsor, i) => (
               <motion.div
                 key={sponsor.name}
                 initial={{ opacity: 0, y: 20 }}
@@ -202,7 +259,7 @@ export default function Home() {
             <div className="flex items-center justify-center gap-3 mb-4">
               <Trophy className="w-10 h-10 text-neon-gold" />
               <h2 className="font-display text-4xl sm:text-5xl font-bold text-white">
-                Monthly <span className="text-neon-purple text-glow-purple">Leaderboard</span>
+                {(primaryLb?.name || "Monthly")} <span className="text-neon-purple text-glow-purple">Leaderboard</span>
               </h2>
             </div>
             <p className="text-muted-foreground text-lg max-w-2xl mx-auto">
@@ -219,7 +276,7 @@ export default function Home() {
                 <div className="col-span-3 text-right">Prize</div>
               </div>
             </div>
-            {leaderboardData.map((player, i) => (
+            {leaderboardList.map((player, i) => (
               <motion.div
                 key={player.rank}
                 initial={{ opacity: 0, x: -20 }}

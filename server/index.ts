@@ -6,6 +6,7 @@ import helmet from "helmet";
 import pg from "pg";
 import connectPgSimple from "connect-pg-simple";
 import { registerRoutes } from "./routes";
+import { startLeaderboardJobs } from "./leaderboardJobs";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { setupAuth } from "./auth";
@@ -117,6 +118,9 @@ app.use((req, res, next) => {
   setupAuth(app);
 
   await registerRoutes(httpServer, app);
+
+  // Start best-effort background refresh for partner leaderboards.
+  startLeaderboardJobs();
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;

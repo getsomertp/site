@@ -1,6 +1,7 @@
 import { 
   users, casinos, userCasinoAccounts, userWallets, giveaways, giveawayEntries, giveawayRequirements, leaderboardCache, userPayments,
   streamEvents, streamEventEntries, tournamentBrackets,
+  siteSettings, leaderboards, leaderboardEntries,
   type User, type InsertUser,
   type Casino, type InsertCasino,
   type UserCasinoAccount, type InsertUserCasinoAccount,
@@ -11,7 +12,10 @@ import {
   type UserPayment, type InsertUserPayment,
   type StreamEvent, type InsertStreamEvent,
   type StreamEventEntry, type InsertStreamEventEntry,
-  type TournamentBracket, type InsertTournamentBracket
+  type TournamentBracket, type InsertTournamentBracket,
+  type SiteSetting, type InsertSiteSetting,
+  type Leaderboard, type InsertLeaderboard,
+  type LeaderboardEntry, type InsertLeaderboardEntry
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, desc, asc, sql, ilike, or } from "drizzle-orm";
@@ -31,6 +35,22 @@ export interface IStorage {
   createCasino(casino: InsertCasino): Promise<Casino>;
   updateCasino(id: number, data: Partial<InsertCasino>): Promise<Casino | undefined>;
   deleteCasino(id: number): Promise<boolean>;
+
+  // Site settings (simple CMS)
+  getSiteSettings(): Promise<SiteSetting[]>;
+  getSiteSetting(key: string): Promise<SiteSetting | undefined>;
+  upsertSiteSetting(setting: InsertSiteSetting): Promise<SiteSetting>;
+
+  // Partner Leaderboards
+  getLeaderboards(admin?: boolean): Promise<Leaderboard[]>;
+  getActiveLeaderboards(): Promise<Leaderboard[]>;
+  getLeaderboard(id: number): Promise<Leaderboard | undefined>;
+  createLeaderboard(data: InsertLeaderboard): Promise<Leaderboard>;
+  updateLeaderboard(id: number, data: Partial<InsertLeaderboard>): Promise<Leaderboard | undefined>;
+  deleteLeaderboard(id: number): Promise<boolean>;
+
+  getLeaderboardEntries(leaderboardId: number, limit?: number): Promise<LeaderboardEntry[]>;
+  replaceLeaderboardEntries(leaderboardId: number, entries: InsertLeaderboardEntry[]): Promise<void>;
   
   // User Casino Accounts
   getUserCasinoAccounts(userId: string): Promise<UserCasinoAccount[]>;
@@ -153,6 +173,97 @@ export class DatabaseStorage implements IStorage {
   async deleteCasino(id: number): Promise<boolean> {
     const result = await db.delete(casinos).where(eq(casinos.id, id));
     return true;
+  }
+
+  // Site settings
+  async getSiteSettings(): Promise<SiteSetting[]> {
+    return db.select().from(siteSettings).orderBy(asc(siteSettings.key));
+  }
+
+  async getSiteSetting(key: string): Promise<SiteSetting | undefined> {
+    const [row] = await db.select().from(siteSettings).where(eq(siteSettings.key, key));
+    return row || undefined;
+  }
+
+  async upsertSiteSetting(setting: InsertSiteSetting): Promise<SiteSetting> {
+    // Postgres upsert via onConflictDoUpdate is available in drizzle's pg dialect.
+    const [row] = await db
+      .insert(siteSettings)
+      .values({ ...setting, updatedAt: new Date() })
+      .onConflictDoUpdate({
+        target: siteSettings.key,
+        set: { value: setting.value, updatedAt: new Date() },
+      })
+      .returning();
+    return row;
+  }
+
+  // Leaderboards
+  async getLeaderboards(admin = false): Promise<Leaderboard[]> {
+    // For public use we only return active leaderboards.
+    const q = db.select().from(leaderboards).orderBy(desc(leaderboards.createdAt));
+    if (admin) return q;
+    return db
+      .select()
+      .from(leaderboards)
+      .where(eq(leaderboards.isActive, true))
+      .orderBy(desc(leaderboards.createdAt));
+  }
+
+  async getActiveLeaderboards(): Promise<Leaderboard[]> {
+    return db
+      .select()
+      .from(leaderboards)
+      .where(eq(leaderboards.isActive, true))
+      .orderBy(desc(leaderboards.createdAt));
+  }
+
+  async getLeaderboard(id: number): Promise<Leaderboard | undefined> {
+    const [row] = await db.select().from(leaderboards).where(eq(leaderboards.id, id));
+    return row || undefined;
+  }
+
+  async createLeaderboard(data: InsertLeaderboard): Promise<Leaderboard> {
+    const startAt = new Date(data.startAt);
+    const endAt = data.endAt ? new Date(data.endAt) : new Date(startAt.getTime() + (data.durationDays ?? 30) * 24 * 60 * 60 * 1000);
+    const [row] = await db
+      .insert(leaderboards)
+      .values({ ...data, startAt, endAt })
+      .returning();
+    return row;
+  }
+
+  async updateLeaderboard(id: number, data: Partial<InsertLeaderboard>): Promise<Leaderboard | undefined> {
+    const patch: any = { ...data };
+    if (data.startAt) patch.startAt = new Date(data.startAt);
+    if (data.endAt) patch.endAt = new Date(data.endAt);
+    const [row] = await db.update(leaderboards).set(patch).where(eq(leaderboards.id, id)).returning();
+    return row || undefined;
+  }
+
+  async deleteLeaderboard(id: number): Promise<boolean> {
+    await db.delete(leaderboards).where(eq(leaderboards.id, id));
+    return true;
+  }
+
+  async getLeaderboardEntries(leaderboardId: number, limit = 100): Promise<LeaderboardEntry[]> {
+    return db
+      .select()
+      .from(leaderboardEntries)
+      .where(eq(leaderboardEntries.leaderboardId, leaderboardId))
+      .orderBy(asc(leaderboardEntries.rank))
+      .limit(limit);
+  }
+
+  async replaceLeaderboardEntries(leaderboardId: number, entries: InsertLeaderboardEntry[]): Promise<void> {
+    await db.transaction(async (tx) => {
+      await tx.delete(leaderboardEntries).where(eq(leaderboardEntries.leaderboardId, leaderboardId));
+      if (entries.length > 0) {
+        await tx.insert(leaderboardEntries).values(
+          entries.map((e) => ({ ...e, leaderboardId, updatedAt: new Date() })),
+        );
+      }
+    });
   }
 
   // User Casino Accounts

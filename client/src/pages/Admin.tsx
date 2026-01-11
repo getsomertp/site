@@ -24,6 +24,24 @@ type RequirementForm = {
   value: string;
 };
 
+type LeaderboardForm = {
+  id?: number;
+  casinoId: number | null;
+  name: string;
+  description: string;
+  periodType: string;
+  durationDays: number;
+  startsAt: string;
+  endsAt: string;
+  refreshIntervalSec: number;
+  apiUrl: string;
+  apiMethod: string;
+  apiHeadersJson: string;
+  apiBodyJson: string;
+  mappingJson: string;
+  isActive: boolean;
+};
+
 // Helper for admin API calls - uses session cookies
 async function adminFetch(url: string, options: RequestInit = {}) {
   const headers = {
@@ -184,6 +202,30 @@ export default function Admin() {
   const [editingGiveaway, setEditingGiveaway] = useState<Giveaway | null>(null);
   const [casinoForm, setCasinoForm] = useState<CasinoFormData>(defaultCasinoForm);
   const [giveawayForm, setGiveawayForm] = useState<GiveawayFormData>(defaultGiveawayForm);
+
+  // Site settings
+  const [siteKickUrl, setSiteKickUrl] = useState("https://kick.com/get-some");
+  const [siteDiscordUrl, setSiteDiscordUrl] = useState("https://discord.gg/");
+
+  // Leaderboards
+  const [leaderboardDialogOpen, setLeaderboardDialogOpen] = useState(false);
+  const [editingLeaderboard, setEditingLeaderboard] = useState<any | null>(null);
+  const [leaderboardForm, setLeaderboardForm] = useState<LeaderboardForm>({
+    casinoId: null,
+    name: "",
+    description: "",
+    periodType: "monthly",
+    durationDays: 30,
+    startsAt: new Date().toISOString(),
+    endsAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+    refreshIntervalSec: 300,
+    apiUrl: "",
+    apiMethod: "GET",
+    apiHeadersJson: "{}",
+    apiBodyJson: "{}",
+    mappingJson: JSON.stringify({ itemsPath: "data.items", rankField: "rank", usernameField: "username", valueField: "value" }, null, 2),
+    isActive: true,
+  });
   
   useEffect(() => {
     fetch("/api/admin/me", { credentials: "include" })
@@ -196,6 +238,25 @@ export default function Admin() {
   const { data: casinos = [], isLoading: loadingCasinos } = useQuery<Casino[]>({
     queryKey: ["/api/admin/casinos"],
     queryFn: () => adminFetch("/api/admin/casinos"),
+    enabled: isAuthenticated === true,
+  });
+
+  // Site settings
+  const { data: siteSettings = {} } = useQuery<Record<string, string>>({
+    queryKey: ["/api/admin/site-settings"],
+    queryFn: () => adminFetch("/api/admin/site-settings"),
+    enabled: isAuthenticated === true,
+  });
+
+  useEffect(() => {
+    if (siteSettings?.kickUrl) setSiteKickUrl(siteSettings.kickUrl);
+    if (siteSettings?.discordUrl) setSiteDiscordUrl(siteSettings.discordUrl);
+  }, [siteSettings]);
+
+  // Leaderboards
+  const { data: leaderboards = [], isLoading: loadingLeaderboards } = useQuery<any[]>({
+    queryKey: ["/api/admin/leaderboards"],
+    queryFn: () => adminFetch("/api/admin/leaderboards"),
     enabled: isAuthenticated === true,
   });
 
@@ -259,6 +320,93 @@ export default function Admin() {
     onError: () => {
       toast({ title: "Failed to delete casino", variant: "destructive" });
     },
+  });
+
+  // Site settings mutation
+  const saveSiteSettings = useMutation({
+    mutationFn: async () => {
+      await adminFetch("/api/admin/site-settings/upsert", {
+        method: "POST",
+        body: JSON.stringify({ key: "kickUrl", value: siteKickUrl }),
+      });
+      await adminFetch("/api/admin/site-settings/upsert", {
+        method: "POST",
+        body: JSON.stringify({ key: "discordUrl", value: siteDiscordUrl }),
+      });
+      return true;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/site-settings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/site/settings"] });
+      toast({ title: "Site settings saved" });
+    },
+    onError: () => toast({ title: "Failed to save site settings", variant: "destructive" }),
+  });
+
+  // Leaderboard mutations
+  const createLeaderboard = useMutation({
+    mutationFn: async (data: LeaderboardForm) => {
+      return adminFetch("/api/admin/leaderboards", {
+        method: "POST",
+        body: JSON.stringify({
+          casinoId: data.casinoId,
+          name: data.name,
+          description: data.description,
+          periodType: data.periodType,
+          durationDays: data.durationDays,
+          startsAt: new Date(data.startsAt),
+          endsAt: new Date(data.endsAt),
+          refreshIntervalSec: data.refreshIntervalSec,
+          apiUrl: data.apiUrl,
+          apiMethod: data.apiMethod,
+          apiHeadersJson: data.apiHeadersJson,
+          apiBodyJson: data.apiBodyJson,
+          mappingJson: data.mappingJson,
+          isActive: data.isActive,
+        }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/leaderboards"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leaderboards/active"] });
+      setLeaderboardDialogOpen(false);
+      setEditingLeaderboard(null);
+      toast({ title: "Leaderboard saved" });
+    },
+    onError: () => toast({ title: "Failed to save leaderboard", variant: "destructive" }),
+  });
+
+  const updateLeaderboard = useMutation({
+    mutationFn: async ({ id, data }: { id: number; data: Partial<LeaderboardForm> }) => {
+      return adminFetch(`/api/admin/leaderboards/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          ...data,
+          ...(data.startsAt ? { startsAt: new Date(data.startsAt) } : {}),
+          ...(data.endsAt ? { endsAt: new Date(data.endsAt) } : {}),
+        }),
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/leaderboards"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leaderboards/active"] });
+      setLeaderboardDialogOpen(false);
+      setEditingLeaderboard(null);
+      toast({ title: "Leaderboard updated" });
+    },
+    onError: () => toast({ title: "Failed to update leaderboard", variant: "destructive" }),
+  });
+
+  const deleteLeaderboard = useMutation({
+    mutationFn: async (id: number) => {
+      return adminFetch(`/api/admin/leaderboards/${id}`, { method: "DELETE" });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/leaderboards"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/leaderboards/active"] });
+      toast({ title: "Leaderboard deleted" });
+    },
+    onError: () => toast({ title: "Failed to delete leaderboard", variant: "destructive" }),
   });
 
   // Giveaway mutations
@@ -412,7 +560,7 @@ export default function Admin() {
           </motion.div>
 
           <Tabs defaultValue="casinos" className="w-full">
-            <TabsList className="grid w-full grid-cols-4 mb-8 bg-card/50">
+            <TabsList className="grid w-full grid-cols-6 mb-8 bg-card/50">
               <TabsTrigger value="casinos" className="font-display" data-testid="admin-tab-casinos">
                 <Trophy className="w-4 h-4 mr-2" /> Casinos
               </TabsTrigger>
@@ -424,6 +572,12 @@ export default function Admin() {
               </TabsTrigger>
               <TabsTrigger value="stream-events" className="font-display" data-testid="admin-tab-stream-events">
                 <Tv className="w-4 h-4 mr-2" /> Stream Events
+              </TabsTrigger>
+              <TabsTrigger value="leaderboards" className="font-display" data-testid="admin-tab-leaderboards">
+                <Trophy className="w-4 h-4 mr-2" /> Leaderboards
+              </TabsTrigger>
+              <TabsTrigger value="site" className="font-display" data-testid="admin-tab-site">
+                <Settings className="w-4 h-4 mr-2" /> Site
               </TabsTrigger>
             </TabsList>
 
@@ -971,6 +1125,225 @@ export default function Admin() {
             </TabsContent>
 
             <PlayersTab casinos={casinos} />
+
+            <TabsContent value="leaderboards">
+              <Card className="glass p-6">
+                <div className="flex items-center justify-between gap-4 mb-6">
+                  <div>
+                    <h2 className="font-display text-2xl text-white">Partner Leaderboards</h2>
+                    <p className="text-muted-foreground">Add a partner API endpoint and mapping so the public site can show real rankings.</p>
+                  </div>
+                  <Button onClick={() => {
+                    setLbDialogOpen(true);
+                    setLbForm({
+                      casinoId: casinos[0]?.id ?? null,
+                      name: "Monthly Leaderboard",
+                      description: "",
+                      periodType: "monthly",
+                      durationDays: 30,
+                      startsAt: new Date().toISOString(),
+                      endsAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+                      refreshIntervalSec: 300,
+                      apiUrl: "",
+                      apiMethod: "GET",
+                      apiHeadersJson: "{}",
+                      apiBodyJson: "{}",
+                      apiItemsPath: "",
+                      apiRankField: "rank",
+                      apiUserField: "user",
+                      apiValueField: "value",
+                      isActive: true,
+                    });
+                  }} className="font-display bg-neon-cyan text-black">
+                    <Plus className="w-4 h-4 mr-2" /> Add Leaderboard
+                  </Button>
+                </div>
+
+                {loadingLeaderboards ? (
+                  <div className="text-center py-12 text-muted-foreground">Loading leaderboards...</div>
+                ) : leaderboards.length === 0 ? (
+                  <div className="text-center py-12 text-muted-foreground">No leaderboards yet. Add one above.</div>
+                ) : (
+                  <div className="space-y-4">
+                    {leaderboards.map((lb) => (
+                      <Card key={lb.id} className="bg-card/40 p-5">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <h3 className="font-display text-lg text-white truncate">{lb.name}</h3>
+                              <Badge className={lb.isActive ? "bg-green-500/20 text-green-400" : "bg-muted text-muted-foreground"}>
+                                {lb.isActive ? "Active" : "Inactive"}
+                              </Badge>
+                            </div>
+                            <p className="text-sm text-muted-foreground mt-1">{lb.description || ""}</p>
+                            <div className="text-xs text-muted-foreground mt-2">
+                              Period: {lb.periodType} • Refresh: {lb.refreshIntervalSec}s
+                            </div>
+                            {lb.lastFetchError ? (
+                              <div className="text-xs text-red-400 mt-2 truncate">Last error: {lb.lastFetchError}</div>
+                            ) : null}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button size="sm" variant="outline" onClick={() => {
+                              setLbDialogOpen(true);
+                              setLbForm({
+                                id: lb.id,
+                                casinoId: lb.casinoId,
+                                name: lb.name,
+                                description: lb.description || "",
+                                periodType: lb.periodType,
+                                durationDays: lb.durationDays,
+                                startsAt: lb.startsAt,
+                                endsAt: lb.endsAt,
+                                refreshIntervalSec: lb.refreshIntervalSec,
+                                apiUrl: lb.apiUrl || "",
+                                apiMethod: lb.apiMethod || "GET",
+                                apiHeadersJson: lb.apiHeadersJson || "{}",
+                                apiBodyJson: lb.apiBodyJson || "{}",
+                                apiItemsPath: lb.apiItemsPath || "",
+                                apiRankField: lb.apiRankField || "rank",
+                                apiUserField: lb.apiUserField || "user",
+                                apiValueField: lb.apiValueField || "value",
+                                isActive: lb.isActive,
+                              });
+                            }}>
+                              <Edit className="w-4 h-4" />
+                            </Button>
+                            <Button size="sm" variant="destructive" onClick={() => {
+                              if (confirm(`Delete leaderboard "${lb.name}"?`)) deleteLeaderboard.mutate(lb.id);
+                            }}>
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                )}
+              </Card>
+
+              <Dialog open={lbDialogOpen} onOpenChange={setLbDialogOpen}>
+                <DialogContent className="max-w-3xl">
+                  <DialogHeader>
+                    <DialogTitle className="font-display">{lbForm.id ? "Edit" : "Add"} Leaderboard</DialogTitle>
+                  </DialogHeader>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Partner (Casino)</Label>
+                      <select
+                        className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                        value={lbForm.casinoId ?? ""}
+                        onChange={(e) => setLbForm((p) => ({ ...p, casinoId: Number(e.target.value) }))}
+                      >
+                        <option value="" disabled>Select...</option>
+                        {casinos.map((c) => (
+                          <option key={c.id} value={c.id}>{c.name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Name</Label>
+                      <Input value={lbForm.name} onChange={(e) => setLbForm((p) => ({ ...p, name: e.target.value }))} />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Description</Label>
+                      <Input value={lbForm.description} onChange={(e) => setLbForm((p) => ({ ...p, description: e.target.value }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Period Type</Label>
+                      <select
+                        className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+                        value={lbForm.periodType}
+                        onChange={(e) => setLbForm((p) => ({ ...p, periodType: e.target.value }))}
+                      >
+                        <option value="weekly">Weekly</option>
+                        <option value="biweekly">Bi-weekly</option>
+                        <option value="monthly">Monthly</option>
+                        <option value="custom">Custom</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Duration (days)</Label>
+                      <Input type="number" value={lbForm.durationDays} onChange={(e) => setLbForm((p) => ({ ...p, durationDays: Number(e.target.value || 0) }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Refresh interval (seconds)</Label>
+                      <Input type="number" value={lbForm.refreshIntervalSec} onChange={(e) => setLbForm((p) => ({ ...p, refreshIntervalSec: Number(e.target.value || 0) }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Active</Label>
+                      <div className="flex items-center gap-2">
+                        <input type="checkbox" checked={lbForm.isActive} onChange={(e) => setLbForm((p) => ({ ...p, isActive: e.target.checked }))} />
+                        <span className="text-sm text-muted-foreground">Show publicly + refresh</span>
+                      </div>
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>API URL</Label>
+                      <Input placeholder="https://partner.com/api/leaderboard" value={lbForm.apiUrl} onChange={(e) => setLbForm((p) => ({ ...p, apiUrl: e.target.value }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Method</Label>
+                      <select className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm" value={lbForm.apiMethod} onChange={(e) => setLbForm((p) => ({ ...p, apiMethod: e.target.value }))}>
+                        <option value="GET">GET</option>
+                        <option value="POST">POST</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Items Path</Label>
+                      <Input placeholder="data.items" value={lbForm.apiItemsPath} onChange={(e) => setLbForm((p) => ({ ...p, apiItemsPath: e.target.value }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Rank Field</Label>
+                      <Input value={lbForm.apiRankField} onChange={(e) => setLbForm((p) => ({ ...p, apiRankField: e.target.value }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>User Field</Label>
+                      <Input value={lbForm.apiUserField} onChange={(e) => setLbForm((p) => ({ ...p, apiUserField: e.target.value }))} />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Value Field</Label>
+                      <Input value={lbForm.apiValueField} onChange={(e) => setLbForm((p) => ({ ...p, apiValueField: e.target.value }))} />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Headers JSON (server-only)</Label>
+                      <Textarea rows={4} value={lbForm.apiHeadersJson} onChange={(e) => setLbForm((p) => ({ ...p, apiHeadersJson: e.target.value }))} />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Body JSON (for POST)</Label>
+                      <Textarea rows={4} value={lbForm.apiBodyJson} onChange={(e) => setLbForm((p) => ({ ...p, apiBodyJson: e.target.value }))} />
+                    </div>
+                  </div>
+                  <div className="flex justify-end gap-2 mt-6">
+                    <Button variant="outline" onClick={() => setLbDialogOpen(false)}>Cancel</Button>
+                    <Button className="font-display bg-neon-cyan text-black" onClick={() => saveLeaderboard.mutate()} disabled={!lbForm.casinoId || !lbForm.name}>
+                      Save
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
+            </TabsContent>
+
+            <TabsContent value="site">
+              <Card className="glass p-6">
+                <h2 className="font-display text-2xl text-white mb-2">Site Settings</h2>
+                <p className="text-muted-foreground mb-6">Update the public buttons/links without editing code.</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Kick Live URL</Label>
+                    <Input value={siteKickUrl} onChange={(e) => setSiteKickUrl(e.target.value)} />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Discord Invite URL</Label>
+                    <Input value={siteDiscordUrl} onChange={(e) => setSiteDiscordUrl(e.target.value)} />
+                  </div>
+                </div>
+                <div className="flex justify-end mt-6">
+                  <Button className="font-display bg-neon-cyan text-black" onClick={() => saveSiteSettings.mutate()} disabled={saveSiteSettings.isPending}>
+                    Save Settings
+                  </Button>
+                </div>
+              </Card>
+            </TabsContent>
 
             <TabsContent value="stream-events">
               <StreamEvents adminFetch={adminFetch} />
