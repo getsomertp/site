@@ -7,7 +7,9 @@
     "dev:client": "vite dev --port 5000",
     "dev": "NODE_ENV=development tsx server/index.ts",
     "build": "tsx script/build.ts",
-    "start": "NODE_ENV=production node dist/index.cjs",
+    "start:app": "NODE_ENV=production node dist/index.cjs",
+    "db:bootstrap": "tsx script/dbBootstrap.ts",
+    "start": "npm run db:bootstrap && npm run db:push && npm run start:app",
     "check": "tsc",
     "db:push": "drizzle-kit push"
   },
