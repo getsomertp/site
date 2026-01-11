@@ -72,37 +72,6 @@ function shuffleCrypto<T>(arr: T[]): T[] {
   return a;
 }
 
-// This blocks cross-site form posts / fetches.
-function sameOrigin(req: Request, res: Response, next: NextFunction) {
-  const method = req.method.toUpperCase();
-  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return next();
-
-  const origin = req.headers.origin;
-  const host = req.headers.host;
-  if (!host) return res.status(400).json({ error: "Bad request" });
-
-  // If Origin is missing (some non-browser clients), allow.
-  if (!origin) return next();
-
-  // Compare origin host to request host
-  try {
-    const u = new URL(origin);
-    if (u.host !== host) {
-      return res.status(403).json({ error: "Forbidden" });
-    }
-    return next();
-  } catch {
-    return res.status(403).json({ error: "Forbidden" });
-  }
-}
-
-const adminLoginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  limit: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-});
-
 export async function registerRoutes(
   httpServer: Server,
   app: Express
