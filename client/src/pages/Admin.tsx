@@ -14,9 +14,13 @@ import { Badge } from "@/components/ui/badge";
 import { Navigation } from "@/components/Navigation";
 import { StreamEvents } from "@/components/StreamEvents";
 import { useToast } from "@/hooks/use-toast";
-import type { Casino, Giveaway, GiveawayRequirement, User, UserPayment, UserCasinoAccount, UserWallet } from "@shared/schema";
-import { CASINO_TIERS } from "@shared/schema";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import type { Casino, Giveaway, GiveawayRequirement, User, UserPayment, UserCasinoAccount, UserWallet } from "@shared/schema";
+
+// IMPORTANT: Don't import the Drizzle schema module (shared/schema.ts) into the browser bundle.
+// It pulls in server/database-only dependencies and can crash the Admin page at runtime.
+// Keep any small shared constants we need for the UI here instead.
+const CASINO_TIERS = ["platinum", "gold", "silver", "none"] as const;
 
 type RequirementForm = {
   type: string;
