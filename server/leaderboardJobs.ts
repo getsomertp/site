@@ -114,12 +114,24 @@ export async function refreshLeaderboardOnce(lb: Leaderboard): Promise<void> {
 }
 
 export function startLeaderboardJobs(): void {
+  // Leaderboards rely on DB-backed partner configs and cached entries.
+  // On first deploy it's common to be missing DATABASE_URL; don't crash the process.
+  if (!process.env.DATABASE_URL) {
+    console.warn("[leaderboards] DATABASE_URL not set; background leaderboard refresh is disabled.");
+    return;
+  }
+
   // Run quickly on boot, then periodically.
   const tick = async () => {
-    const lbs = await storage.getActiveLeaderboards();
-    for (const lb of lbs) {
-      // eslint-disable-next-line no-await-in-loop
-      await refreshLeaderboardOnce(lb);
+    try {
+      const lbs = await storage.getActiveLeaderboards();
+      for (const lb of lbs) {
+        // eslint-disable-next-line no-await-in-loop
+        await refreshLeaderboardOnce(lb);
+      }
+    } catch (e) {
+      // Never let a transient DB/network error kill the server.
+      console.error("[leaderboards] tick failed", e);
     }
   };
 
