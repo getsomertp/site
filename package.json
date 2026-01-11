@@ -89,7 +89,7 @@
     "@types/express-session": "^1.18.0",
     "@types/node": "^20.19.0",
     "@types/passport": "^1.0.16",
-    "@types/passport-discord": "^0.1.16",
+    "@types/passport-discord": "^0.1.15",
     "@types/passport-local": "^1.0.38",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
