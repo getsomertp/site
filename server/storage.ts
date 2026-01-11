@@ -54,12 +54,14 @@ export interface IStorage {
   
   // User Casino Accounts
   getUserCasinoAccounts(userId: string): Promise<UserCasinoAccount[]>;
+  getUserCasinoAccountById(id: number): Promise<UserCasinoAccount | undefined>;
   createUserCasinoAccount(account: InsertUserCasinoAccount): Promise<UserCasinoAccount>;
   updateUserCasinoAccount(id: number, data: Partial<InsertUserCasinoAccount>): Promise<UserCasinoAccount | undefined>;
   deleteUserCasinoAccount(id: number): Promise<boolean>;
   
   // User Wallets
   getUserWallets(userId: string): Promise<UserWallet[]>;
+  getUserWalletById(id: number): Promise<UserWallet | undefined>;
   createUserWallet(wallet: InsertUserWallet): Promise<UserWallet>;
   updateUserWallet(id: number, data: Partial<InsertUserWallet>): Promise<UserWallet | undefined>;
   deleteUserWallet(id: number): Promise<boolean>;
@@ -271,6 +273,11 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(userCasinoAccounts).where(eq(userCasinoAccounts.userId, userId));
   }
 
+  async getUserCasinoAccountById(id: number): Promise<UserCasinoAccount | undefined> {
+    const [row] = await db.select().from(userCasinoAccounts).where(eq(userCasinoAccounts.id, id));
+    return row || undefined;
+  }
+
   async createUserCasinoAccount(account: InsertUserCasinoAccount): Promise<UserCasinoAccount> {
     const [result] = await db.insert(userCasinoAccounts).values(account).returning();
     return result;
@@ -289,6 +296,11 @@ export class DatabaseStorage implements IStorage {
   // User Wallets
   async getUserWallets(userId: string): Promise<UserWallet[]> {
     return db.select().from(userWallets).where(eq(userWallets.userId, userId));
+  }
+
+  async getUserWalletById(id: number): Promise<UserWallet | undefined> {
+    const [row] = await db.select().from(userWallets).where(eq(userWallets.id, id));
+    return row || undefined;
   }
 
   async createUserWallet(wallet: InsertUserWallet): Promise<UserWallet> {

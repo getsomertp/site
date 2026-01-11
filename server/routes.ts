@@ -4,6 +4,9 @@ import { storage } from "./storage";
 import passport from "passport";
 import rateLimit from "express-rate-limit";
 import crypto from "crypto";
+import multer from "multer";
+import fs from "fs";
+import path from "path";
 import { 
   insertCasinoSchema, 
   insertGiveawaySchema,
@@ -50,6 +53,37 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   return res.status(401).json({ error: "Unauthorized - Login required" });
 }
 
+// File uploads (wallet screenshots)
+function createWalletScreenshotUploader() {
+  const uploadsRoot = path.resolve(process.env.UPLOADS_DIR || "uploads");
+  const screenshotsRoot = path.join(uploadsRoot, "wallet-screenshots");
+  fs.mkdirSync(screenshotsRoot, { recursive: true });
+
+  return multer({
+    storage: multer.diskStorage({
+      destination: (req, _file, cb) => {
+        const userId = req.session?.userId || "anonymous";
+        const dir = path.join(screenshotsRoot, userId);
+        fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+      },
+      filename: (_req, file, cb) => {
+        const ext = path.extname(file.originalname || "").toLowerCase().slice(0, 10);
+        const name = `${Date.now()}-${crypto.randomBytes(8).toString("hex")}${ext}`;
+        cb(null, name);
+      },
+    }),
+    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+    fileFilter: (_req, file, cb) => {
+      if (!file.mimetype?.startsWith("image/")) {
+        return cb(new Error("Only image uploads are allowed"));
+      }
+      cb(null, true);
+    },
+  });
+}
+
+
 function requireSelfOrAdmin(req: Request, res: Response, next: NextFunction) {
   const targetUserId = req.params.id;
   if (req.session?.isAdmin || req.session?.userId === targetUserId) return next();
@@ -91,6 +125,32 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // Wallet screenshot upload (multipart/form-data field: "file")
+  const walletScreenshotUpload = createWalletScreenshotUploader();
+  app.post(
+    "/api/uploads/wallet-screenshot",
+    requireAuth,
+    walletScreenshotUpload.single("file"),
+    async (req: Request, res: Response) => {
+      try {
+        if (!req.file) {
+          return res.status(400).json({ error: "No file uploaded" });
+        }
+
+        const uploadsRoot = path.resolve(process.env.UPLOADS_DIR || "uploads");
+        const rel = path
+          .relative(uploadsRoot, req.file.path)
+          .split(path.sep)
+          .join("/");
+
+        return res.json({ url: `/uploads/${rel}` });
+      } catch (error) {
+        return res.status(500).json({ error: "Failed to upload screenshot" });
+      }
+    },
+  );
+
+
 
   // Same-origin enforcement for state-changing requests (CSRF mitigation)
   app.use("/api", requireSameOrigin);
@@ -647,12 +707,22 @@ export async function registerRoutes(
     }
   });
 
-  // Update casino account
-  // Updating/deleting by ID is admin-only until per-record ownership checks are implemented
-  app.patch("/api/casino-accounts/:id", adminAuth, async (req: Request, res: Response) => {
+  // Update casino account (owner or admin)
+  app.patch("/api/casino-accounts/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.id, 10);
+      const existing = await storage.getUserCasinoAccountById(id);
+      if (!existing) {
+        return res.status(404).json({ error: "Casino account not found" });
+      }
+      if (!req.session?.isAdmin && req.session?.userId !== existing.userId) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
       const data = insertUserCasinoAccountSchema.partial().parse(req.body);
+      // Never allow changing ownership via this route
+      delete (data as any).userId;
+
       const account = await storage.updateUserCasinoAccount(id, data);
       if (!account) {
         return res.status(404).json({ error: "Casino account not found" });
@@ -666,16 +736,25 @@ export async function registerRoutes(
     }
   });
 
-  // Delete casino account
-  app.delete("/api/casino-accounts/:id", adminAuth, async (req: Request, res: Response) => {
+
+  // Delete casino account (owner or admin)
+  app.delete("/api/casino-accounts/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.id, 10);
+      const existing = await storage.getUserCasinoAccountById(id);
+      if (!existing) {
+        return res.status(404).json({ error: "Casino account not found" });
+      }
+      if (!req.session?.isAdmin && req.session?.userId !== existing.userId) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
       await storage.deleteUserCasinoAccount(id);
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ error: "Failed to delete casino account" });
     }
   });
+
 
   // Add wallet for user
   app.post("/api/users/:id/wallets", requireAuth, requireSelfOrAdmin, async (req: Request, res: Response) => {
@@ -692,11 +771,26 @@ export async function registerRoutes(
     }
   });
 
-  // Update wallet
-  app.patch("/api/wallets/:id", adminAuth, async (req: Request, res: Response) => {
+  // Update wallet (owner or admin; verification is admin-only)
+  app.patch("/api/wallets/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.id, 10);
+      const existing = await storage.getUserWalletById(id);
+      if (!existing) {
+        return res.status(404).json({ error: "Wallet not found" });
+      }
+      if (!req.session?.isAdmin && req.session?.userId !== existing.userId) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
       const data = insertUserWalletSchema.partial().parse(req.body);
+      delete (data as any).userId;
+
+      // Only admins can set verified
+      if ((data as any).verified !== undefined && !req.session?.isAdmin) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
       const wallet = await storage.updateUserWallet(id, data);
       if (!wallet) {
         return res.status(404).json({ error: "Wallet not found" });
@@ -710,16 +804,25 @@ export async function registerRoutes(
     }
   });
 
-  // Delete wallet
-  app.delete("/api/wallets/:id", adminAuth, async (req: Request, res: Response) => {
+
+  // Delete wallet (owner or admin)
+  app.delete("/api/wallets/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.id, 10);
+      const existing = await storage.getUserWalletById(id);
+      if (!existing) {
+        return res.status(404).json({ error: "Wallet not found" });
+      }
+      if (!req.session?.isAdmin && req.session?.userId !== existing.userId) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
       await storage.deleteUserWallet(id);
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ error: "Failed to delete wallet" });
     }
   });
+
 
   // ============ LEADERBOARD ============
   
