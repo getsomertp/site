@@ -267,6 +267,9 @@ export default function Admin() {
   // Fetch giveaways  
   const { data: giveaways = [], isLoading: loadingGiveaways } = useQuery<(Giveaway & { entries: number; requirements: GiveawayRequirement[] })[]>({
     queryKey: ["/api/giveaways"],
+    // IMPORTANT: react-query requires a queryFn. Without it, the Admin page can throw at runtime
+    // and appear to have "no admin features" even though authentication worked.
+    queryFn: () => adminFetch("/api/admin/giveaways"),
     enabled: isAuthenticated === true,
   });
 
