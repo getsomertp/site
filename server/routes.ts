@@ -156,14 +156,31 @@ export async function registerRoutes(
   // Admin login (rate limited)
   app.post("/api/admin/login", adminLoginLimiter, async (req: Request, res: Response) => {
     try {
-      const { password } = req.body;
-      const adminSecret = process.env.ADMIN_SECRET;
+      // Be forgiving about common copy/paste issues (trailing spaces/newlines)
+      // while still requiring a match of the intended secret.
+      const normalize = (v: unknown) => {
+        let s = String(v ?? "").trim();
+        // If someone pasted quotes into Railway variables ("secret") or ('secret'),
+        // strip one layer of matching surrounding quotes.
+        if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+          s = s.slice(1, -1).trim();
+        }
+        return s;
+      };
+
+      const password = normalize(req.body?.password);
+      const adminSecret = normalize(process.env.ADMIN_SECRET);
       
       if (!adminSecret) {
         return res.status(503).json({ error: "Admin not configured" });
       }
       
-      if (password === adminSecret) {
+      // Constant-time compare to avoid timing differences.
+      const a = Buffer.from(password, "utf8");
+      const b = Buffer.from(adminSecret, "utf8");
+      const isMatch = a.length === b.length && a.length > 0 && crypto.timingSafeEqual(a, b);
+
+      if (isMatch) {
         req.session.regenerate((err) => {
           if (err) {
             return res.status(500).json({ error: "Login failed" });
