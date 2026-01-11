@@ -3,6 +3,14 @@ import type { Leaderboard, InsertLeaderboardEntry } from "@shared/schema";
 
 type JsonValue = any;
 
+type Mapping = {
+  itemsPath: string;
+  rankFieldPath?: string;
+  usernameFieldPath: string;
+  userIdFieldPath?: string;
+  valueFieldPath: string;
+};
+
 function safeJsonParse<T = any>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
   try {
@@ -12,14 +20,13 @@ function safeJsonParse<T = any>(value: string | null | undefined, fallback: T): 
   }
 }
 
-// Basic dot-path resolver: "data.items.0.name"
 function getByPath(obj: JsonValue, path: string | null | undefined): any {
   if (!path) return undefined;
   const parts = path.split(".").filter(Boolean);
   let cur: any = obj;
   for (const p of parts) {
     if (cur == null) return undefined;
-    if (p.match(/^\d+$/)) cur = cur[Number(p)];
+    if (/^\d+$/.test(p)) cur = cur[Number(p)];
     else cur = cur[p];
   }
   return cur;
@@ -33,7 +40,6 @@ async function fetchJson(url: string, options: RequestInit): Promise<any> {
   }
   const ct = res.headers.get("content-type") || "";
   if (ct.includes("application/json")) return res.json();
-  // Some partner APIs return JSON without correct headers.
   const text = await res.text();
   try {
     return JSON.parse(text);
@@ -58,18 +64,29 @@ export async function refreshLeaderboardOnce(lb: Leaderboard): Promise<void> {
   try {
     const headers = safeJsonParse<Record<string, string>>(lb.apiHeadersJson, {});
     const bodyJson = safeJsonParse<any>(lb.apiBodyJson, null);
+    const query = safeJsonParse<Record<string, string | number>>(lb.apiQueryJson, {});
+    const mapping = safeJsonParse<Mapping>(lb.apiMappingJson, {
+      itemsPath: "data.items",
+      usernameFieldPath: "username",
+      valueFieldPath: "value",
+    });
+
     const method = (lb.apiMethod || "GET").toUpperCase();
+
+    const url = new URL(lb.apiEndpoint);
+    for (const [k, v] of Object.entries(query || {})) {
+      url.searchParams.set(k, String(v));
+    }
 
     const init: RequestInit = {
       method,
       headers: {
-        "accept": "application/json",
+        accept: "application/json",
         ...headers,
       },
     };
 
     if (method !== "GET" && method !== "HEAD" && bodyJson != null) {
-      // If the admin didn't specify a content-type, default to JSON.
       const h = init.headers as Record<string, string>;
       if (!Object.keys(h).some((k) => k.toLowerCase() === "content-type")) {
         h["content-type"] = "application/json";
@@ -77,26 +94,31 @@ export async function refreshLeaderboardOnce(lb: Leaderboard): Promise<void> {
       init.body = typeof bodyJson === "string" ? bodyJson : JSON.stringify(bodyJson);
     }
 
-    const data = await fetchJson(lb.apiUrl, init);
-    const items = getByPath(data, lb.itemsPath) ?? [];
+    const data = await fetchJson(url.toString(), init);
+    const items = getByPath(data, mapping.itemsPath) ?? [];
     if (!Array.isArray(items)) throw new Error("itemsPath did not resolve to an array");
 
-    const entries: InsertLeaderboardEntry[] = items.slice(0, lb.maxEntries ?? 100).map((it, idx) => {
-      const rank = Number(getByPath(it, lb.rankFieldPath) ?? idx + 1);
-      const username = String(getByPath(it, lb.usernameFieldPath) ?? "").trim();
-      const userIdRaw = getByPath(it, lb.userIdFieldPath);
-      const valueRaw = getByPath(it, lb.valueFieldPath);
+    const entries: InsertLeaderboardEntry[] = items.map((it, idx) => {
+      const rankRaw = mapping.rankFieldPath ? getByPath(it, mapping.rankFieldPath) : idx + 1;
+      const usernameRaw = getByPath(it, mapping.usernameFieldPath);
+      const externalIdRaw = mapping.userIdFieldPath ? getByPath(it, mapping.userIdFieldPath) : null;
+      const valueRaw = getByPath(it, mapping.valueFieldPath);
 
-      const valueNumber = typeof valueRaw === "number" ? valueRaw : Number(String(valueRaw ?? "0").replace(/[^0-9.\-]/g, ""));
-      const displayValue = valueRaw == null ? "" : String(valueRaw);
+      const rank = Number(rankRaw ?? idx + 1);
+      const username = String(usernameRaw ?? `#${idx + 1}`).trim() || `#${idx + 1}`;
+      const externalUserId = externalIdRaw == null ? null : String(externalIdRaw);
+
+      let valueNum = 0;
+      if (typeof valueRaw === "number") valueNum = valueRaw;
+      else valueNum = Number(String(valueRaw ?? "0").replace(/[^0-9.\-]/g, "")) || 0;
 
       return {
         leaderboardId: lb.id,
         rank: Number.isFinite(rank) ? rank : idx + 1,
-        userId: userIdRaw == null ? null : String(userIdRaw),
-        username: username || `#${idx + 1}`,
-        valueNumber: Number.isFinite(valueNumber) ? valueNumber : 0,
-        valueDisplay: displayValue,
+        username,
+        externalUserId,
+        value: String(valueNum),
+        rawDataJson: JSON.stringify(it),
       };
     });
 
@@ -114,14 +136,11 @@ export async function refreshLeaderboardOnce(lb: Leaderboard): Promise<void> {
 }
 
 export function startLeaderboardJobs(): void {
-  // Leaderboards rely on DB-backed partner configs and cached entries.
-  // On first deploy it's common to be missing DATABASE_URL; don't crash the process.
   if (!process.env.DATABASE_URL) {
     console.warn("[leaderboards] DATABASE_URL not set; background leaderboard refresh is disabled.");
     return;
   }
 
-  // Run quickly on boot, then periodically.
   const tick = async () => {
     try {
       const lbs = await storage.getActiveLeaderboards();
@@ -130,12 +149,11 @@ export function startLeaderboardJobs(): void {
         await refreshLeaderboardOnce(lb);
       }
     } catch (e) {
-      // Never let a transient DB/network error kill the server.
       console.error("[leaderboards] tick failed", e);
     }
   };
 
   void tick();
-  const intervalMs = 60_000; // every 60s; per-lb throttle handled by shouldFetch()
+  const intervalMs = 60_000;
   setInterval(() => void tick(), intervalMs).unref();
 }

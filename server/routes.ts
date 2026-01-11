@@ -715,29 +715,24 @@ export async function registerRoutes(
     try {
       const { casinoSlug, period } = req.params;
       const casino = await storage.getCasinoBySlug(casinoSlug);
-      
-      if (!casino) {
-        return res.status(404).json({ error: "Casino not found" });
+      if (!casino) return res.status(404).json({ error: "Casino not found" });
+
+      // This endpoint returns cached leaderboard entries (fetched server-side) so the site never uses placeholders.
+      // Prefer an active leaderboard that matches the requested periodType, otherwise fall back to the most recent.
+      const active = (await storage.getActiveLeaderboards()).filter((lb) => lb.casinoId === casino.id);
+      const wanted = active.find((lb) => lb.periodType === period) || active[0];
+      if (!wanted) {
+        return res.json({ casino: casino.name, period, leaderboardId: null, lastFetchedAt: null, entries: [] });
       }
 
-      // If no API configured, return empty placeholder
-      if (!casino.leaderboardApiUrl) {
-        return res.json({ 
-          casino: casino.name,
-          period,
-          data: [],
-          message: "Leaderboard API not configured for this casino"
-        });
-      }
-
-      // In production, you'd fetch from the configured API
-      // For now, return placeholder indicating API is configured
+      const entries = await storage.getLeaderboardEntries(wanted.id, 500);
       res.json({
         casino: casino.name,
         period,
-        apiConfigured: true,
-        apiUrl: casino.leaderboardApiUrl,
-        data: []
+        leaderboardId: wanted.id,
+        lastFetchedAt: wanted.lastFetchedAt,
+        lastFetchError: wanted.lastFetchError,
+        entries,
       });
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch leaderboard" });

@@ -38,11 +38,11 @@ type LeaderboardForm = {
   startsAt: string;
   endsAt: string;
   refreshIntervalSec: number;
-  apiUrl: string;
+  apiEndpoint: string;
   apiMethod: string;
   apiHeadersJson: string;
   apiBodyJson: string;
-  mappingJson: string;
+  apiMappingJson: string;
   isActive: boolean;
 };
 
@@ -223,11 +223,11 @@ export default function Admin() {
     startsAt: new Date().toISOString(),
     endsAt: new Date(Date.now() + 30 * 86400000).toISOString(),
     refreshIntervalSec: 300,
-    apiUrl: "",
+    apiEndpoint: "",
     apiMethod: "GET",
     apiHeadersJson: "{}",
     apiBodyJson: "{}",
-    mappingJson: JSON.stringify({ itemsPath: "data.items", rankField: "rank", usernameField: "username", valueField: "value" }, null, 2),
+    apiMappingJson: JSON.stringify({ itemsPath: "data.items", rankField: "rank", usernameField: "username", valueField: "value" }, null, 2),
     isActive: true,
   });
   
@@ -358,17 +358,16 @@ export default function Admin() {
         body: JSON.stringify({
           casinoId: data.casinoId,
           name: data.name,
-          description: data.description,
-          periodType: data.periodType,
+                    periodType: data.periodType,
           durationDays: data.durationDays,
-          startsAt: new Date(data.startsAt),
-          endsAt: new Date(data.endsAt),
+          startAt: new Date(data.startsAt),
+          endAt: new Date(data.endsAt),
           refreshIntervalSec: data.refreshIntervalSec,
-          apiUrl: data.apiUrl,
+          apiEndpoint: data.apiUrl,
           apiMethod: data.apiMethod,
           apiHeadersJson: data.apiHeadersJson,
           apiBodyJson: data.apiBodyJson,
-          mappingJson: data.mappingJson,
+          apiMappingJson: data.mappingJson,
           isActive: data.isActive,
         }),
       });
@@ -383,28 +382,38 @@ export default function Admin() {
     onError: () => toast({ title: "Failed to save leaderboard", variant: "destructive" }),
   });
 
-  const updateLeaderboard = useMutation({
-    mutationFn: async ({ id, data }: { id: number; data: Partial<LeaderboardForm> }) => {
-      return adminFetch(`/api/admin/leaderboards/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          ...data,
-          ...(data.startsAt ? { startsAt: new Date(data.startsAt) } : {}),
-          ...(data.endsAt ? { endsAt: new Date(data.endsAt) } : {}),
-        }),
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/leaderboards"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/leaderboards/active"] });
-      setLeaderboardDialogOpen(false);
-      setEditingLeaderboard(null);
-      toast({ title: "Leaderboard updated" });
-    },
-    onError: () => toast({ title: "Failed to update leaderboard", variant: "destructive" }),
-  });
+const updateLeaderboard = useMutation({
+  mutationFn: async ({ id, data }: { id: number; data: Partial<LeaderboardForm> }) => {
+    return adminFetch(`/api/admin/leaderboards/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        ...(data.casinoId !== undefined ? { casinoId: data.casinoId } : {}),
+        ...(data.name !== undefined ? { name: data.name } : {}),
+        ...(data.periodType !== undefined ? { periodType: data.periodType } : {}),
+        ...(data.durationDays !== undefined ? { durationDays: data.durationDays } : {}),
+        ...(data.refreshIntervalSec !== undefined ? { refreshIntervalSec: data.refreshIntervalSec } : {}),
+        ...(data.startsAt !== undefined ? { startAt: new Date(data.startsAt) } : {}),
+        ...(data.endsAt !== undefined ? { endAt: new Date(data.endsAt) } : {}),
+        ...(data.apiUrl !== undefined ? { apiEndpoint: data.apiUrl } : {}),
+        ...(data.apiMethod !== undefined ? { apiMethod: data.apiMethod } : {}),
+        ...(data.apiHeadersJson !== undefined ? { apiHeadersJson: data.apiHeadersJson } : {}),
+        ...(data.apiBodyJson !== undefined ? { apiBodyJson: data.apiBodyJson } : {}),
+        ...(data.mappingJson !== undefined ? { apiMappingJson: data.mappingJson } : {}),
+        ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+      }),
+    });
+  },
+  onSuccess: () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/admin/leaderboards"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/leaderboards/active"] });
+    setLeaderboardDialogOpen(false);
+    setEditingLeaderboard(null);
+    toast({ title: "Leaderboard updated" });
+  },
+  onError: () => toast({ title: "Failed to update leaderboard", variant: "destructive" }),
+});
 
-  const deleteLeaderboard = useMutation({
+const deleteLeaderboard = useMutation({
     mutationFn: async (id: number) => {
       return adminFetch(`/api/admin/leaderboards/${id}`, { method: "DELETE" });
     },
@@ -423,9 +432,19 @@ export default function Admin() {
       return adminFetch("/api/admin/giveaways", {
         method: "POST",
         body: JSON.stringify({ 
-          ...rest, 
-          endsAt: new Date(data.endsAt),
-          requirements: requirements.filter(r => r.type !== "none"),
+          ...(data.casinoId !== undefined ? { casinoId: data.casinoId } : {}),
+          ...(data.name !== undefined ? { name: data.name } : {}),
+          ...(data.periodType !== undefined ? { periodType: data.periodType } : {}),
+          ...(data.durationDays !== undefined ? { durationDays: data.durationDays } : {}),
+          ...(data.refreshIntervalSec !== undefined ? { refreshIntervalSec: data.refreshIntervalSec } : {}),
+          ...(data.startsAt !== undefined ? { startAt: new Date(data.startsAt) } : {}),
+          ...(data.endsAt !== undefined ? { endAt: new Date(data.endsAt) } : {}),
+          ...(data.apiUrl !== undefined ? { apiEndpoint: data.apiUrl } : {}),
+          ...(data.apiMethod !== undefined ? { apiMethod: data.apiMethod } : {}),
+          ...(data.apiHeadersJson !== undefined ? { apiHeadersJson: data.apiHeadersJson } : {}),
+          ...(data.apiBodyJson !== undefined ? { apiBodyJson: data.apiBodyJson } : {}),
+          ...(data.mappingJson !== undefined ? { apiMappingJson: data.mappingJson } : {}),
+          ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
         }),
       });
     },
@@ -1133,202 +1152,251 @@ export default function Admin() {
 
             <PlayersTab casinos={casinos} />
 
-            <TabsContent value="leaderboards">
-              <Card className="glass p-6">
-                <div className="flex items-center justify-between gap-4 mb-6">
-                  <div>
-                    <h2 className="font-display text-2xl text-white">Partner Leaderboards</h2>
-                    <p className="text-muted-foreground">Add a partner API endpoint and mapping so the public site can show real rankings.</p>
-                  </div>
-                  <Button onClick={() => {
-                    setLbDialogOpen(true);
-                    setLbForm({
-                      casinoId: casinos[0]?.id ?? null,
-                      name: "Monthly Leaderboard",
-                      description: "",
-                      periodType: "monthly",
-                      durationDays: 30,
-                      startsAt: new Date().toISOString(),
-                      endsAt: new Date(Date.now() + 30 * 86400000).toISOString(),
-                      refreshIntervalSec: 300,
-                      apiUrl: "",
-                      apiMethod: "GET",
-                      apiHeadersJson: "{}",
-                      apiBodyJson: "{}",
-                      apiItemsPath: "",
-                      apiRankField: "rank",
-                      apiUserField: "user",
-                      apiValueField: "value",
-                      isActive: true,
-                    });
-                  }} className="font-display bg-neon-cyan text-black">
-                    <Plus className="w-4 h-4 mr-2" /> Add Leaderboard
-                  </Button>
+            
+<TabsContent value="leaderboards">
+  <Card className="glass p-6">
+    <div className="flex items-center justify-between gap-4 mb-6">
+      <div>
+        <h2 className="font-display text-2xl text-white">Partner Leaderboards</h2>
+        <p className="text-muted-foreground">Configure each partner&apos;s leaderboard API and mapping. The server fetches and caches entries.</p>
+      </div>
+
+      <Button
+        onClick={() => {
+          setEditingLeaderboard(null);
+          setLeaderboardForm({
+            casinoId: casinos[0]?.id ?? null,
+            name: "Monthly Leaderboard",
+            description: "",
+            periodType: "monthly",
+            durationDays: 30,
+            startsAt: new Date().toISOString(),
+            endsAt: new Date(Date.now() + 30 * 86400000).toISOString(),
+            refreshIntervalSec: 300,
+            apiEndpoint: "",
+            apiMethod: "GET",
+            apiHeadersJson: "{}",
+            apiBodyJson: "{}",
+            apiMappingJson: JSON.stringify(
+              {
+                itemsPath: "data.items",
+                rankFieldPath: "rank",
+                usernameFieldPath: "username",
+                userIdFieldPath: "id",
+                valueFieldPath: "value",
+              },
+              null,
+              2,
+            ),
+            isActive: true,
+          });
+          setLeaderboardDialogOpen(true);
+        }}
+        className="font-display bg-neon-cyan text-black"
+      >
+        <Plus className="w-4 h-4 mr-2" /> Add Leaderboard
+      </Button>
+    </div>
+
+    {loadingLeaderboards ? (
+      <div className="text-center py-12 text-muted-foreground">Loading leaderboards...</div>
+    ) : leaderboards.length === 0 ? (
+      <div className="text-center py-12 text-muted-foreground">No leaderboards yet. Add one above.</div>
+    ) : (
+      <div className="space-y-4">
+        {leaderboards.map((lb: any) => (
+          <Card key={lb.id} className="bg-card/40 p-5">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <h3 className="font-display text-lg text-white truncate">{lb.name}</h3>
+                  <Badge className={lb.isActive ? "bg-green-500/20 text-green-400" : "bg-muted text-muted-foreground"}>
+                    {lb.isActive ? "Active" : "Inactive"}
+                  </Badge>
                 </div>
+                {lb.lastFetchError ? (
+                  <div className="text-xs text-red-400 mt-2 truncate">Last error: {lb.lastFetchError}</div>
+                ) : null}
+                <div className="text-xs text-muted-foreground mt-2">
+                  Period: {lb.periodType} • Refresh: {lb.refreshIntervalSec}s
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setEditingLeaderboard(lb);
+                    // Server fields: startAt/endAt, apiEndpoint, apiMappingJson
+                    setLeaderboardForm({
+                      id: lb.id,
+                      casinoId: lb.casinoId,
+                      name: lb.name,
+                      description: "",
+                      periodType: lb.periodType,
+                      durationDays: lb.durationDays,
+                      startsAt: (lb.startAt ? new Date(lb.startAt).toISOString() : new Date().toISOString()),
+                      endsAt: (lb.endAt ? new Date(lb.endAt).toISOString() : new Date().toISOString()),
+                      refreshIntervalSec: lb.refreshIntervalSec,
+                      apiEndpoint: lb.apiEndpoint || "",
+                      apiMethod: lb.apiMethod || "GET",
+                      apiHeadersJson: lb.apiHeadersJson || "{}",
+                      apiBodyJson: lb.apiBodyJson || "{}",
+                      apiMappingJson: lb.apiMappingJson || "{}",
+                      isActive: Boolean(lb.isActive),
+                    });
+                    setLeaderboardDialogOpen(true);
+                  }}
+                >
+                  <Edit className="w-4 h-4" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => {
+                    if (confirm(`Delete leaderboard "${lb.name}"?`)) deleteLeaderboard.mutate(lb.id);
+                  }}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          </Card>
+        ))}
+      </div>
+    )}
+  </Card>
 
-                {loadingLeaderboards ? (
-                  <div className="text-center py-12 text-muted-foreground">Loading leaderboards...</div>
-                ) : leaderboards.length === 0 ? (
-                  <div className="text-center py-12 text-muted-foreground">No leaderboards yet. Add one above.</div>
-                ) : (
-                  <div className="space-y-4">
-                    {leaderboards.map((lb) => (
-                      <Card key={lb.id} className="bg-card/40 p-5">
-                        <div className="flex items-start justify-between gap-4">
-                          <div className="min-w-0 flex-1">
-                            <div className="flex items-center gap-2">
-                              <h3 className="font-display text-lg text-white truncate">{lb.name}</h3>
-                              <Badge className={lb.isActive ? "bg-green-500/20 text-green-400" : "bg-muted text-muted-foreground"}>
-                                {lb.isActive ? "Active" : "Inactive"}
-                              </Badge>
-                            </div>
-                            <p className="text-sm text-muted-foreground mt-1">{lb.description || ""}</p>
-                            <div className="text-xs text-muted-foreground mt-2">
-                              Period: {lb.periodType} • Refresh: {lb.refreshIntervalSec}s
-                            </div>
-                            {lb.lastFetchError ? (
-                              <div className="text-xs text-red-400 mt-2 truncate">Last error: {lb.lastFetchError}</div>
-                            ) : null}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Button size="sm" variant="outline" onClick={() => {
-                              setLbDialogOpen(true);
-                              setLbForm({
-                                id: lb.id,
-                                casinoId: lb.casinoId,
-                                name: lb.name,
-                                description: lb.description || "",
-                                periodType: lb.periodType,
-                                durationDays: lb.durationDays,
-                                startsAt: lb.startsAt,
-                                endsAt: lb.endsAt,
-                                refreshIntervalSec: lb.refreshIntervalSec,
-                                apiUrl: lb.apiUrl || "",
-                                apiMethod: lb.apiMethod || "GET",
-                                apiHeadersJson: lb.apiHeadersJson || "{}",
-                                apiBodyJson: lb.apiBodyJson || "{}",
-                                apiItemsPath: lb.apiItemsPath || "",
-                                apiRankField: lb.apiRankField || "rank",
-                                apiUserField: lb.apiUserField || "user",
-                                apiValueField: lb.apiValueField || "value",
-                                isActive: lb.isActive,
-                              });
-                            }}>
-                              <Edit className="w-4 h-4" />
-                            </Button>
-                            <Button size="sm" variant="destructive" onClick={() => {
-                              if (confirm(`Delete leaderboard "${lb.name}"?`)) deleteLeaderboard.mutate(lb.id);
-                            }}>
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      </Card>
-                    ))}
-                  </div>
-                )}
-              </Card>
+  <Dialog
+    open={leaderboardDialogOpen}
+    onOpenChange={(open) => {
+      setLeaderboardDialogOpen(open);
+      if (!open) setEditingLeaderboard(null);
+    }}
+  >
+    <DialogContent className="glass border-white/10 max-w-3xl max-h-[90vh] overflow-y-auto">
+      <DialogHeader>
+        <DialogTitle className="font-display text-2xl">
+          {editingLeaderboard ? "Edit Leaderboard" : "Add Leaderboard"}
+        </DialogTitle>
+      </DialogHeader>
 
-              <Dialog open={lbDialogOpen} onOpenChange={setLbDialogOpen}>
-                <DialogContent className="max-w-3xl">
-                  <DialogHeader>
-                    <DialogTitle className="font-display">{lbForm.id ? "Edit" : "Add"} Leaderboard</DialogTitle>
-                  </DialogHeader>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label>Partner (Casino)</Label>
-                      <select
-                        className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
-                        value={lbForm.casinoId ?? ""}
-                        onChange={(e) => setLbForm((p) => ({ ...p, casinoId: Number(e.target.value) }))}
-                      >
-                        <option value="" disabled>Select...</option>
-                        {casinos.map((c) => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Name</Label>
-                      <Input value={lbForm.name} onChange={(e) => setLbForm((p) => ({ ...p, name: e.target.value }))} />
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>Description</Label>
-                      <Input value={lbForm.description} onChange={(e) => setLbForm((p) => ({ ...p, description: e.target.value }))} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Period Type</Label>
-                      <select
-                        className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
-                        value={lbForm.periodType}
-                        onChange={(e) => setLbForm((p) => ({ ...p, periodType: e.target.value }))}
-                      >
-                        <option value="weekly">Weekly</option>
-                        <option value="biweekly">Bi-weekly</option>
-                        <option value="monthly">Monthly</option>
-                        <option value="custom">Custom</option>
-                      </select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Duration (days)</Label>
-                      <Input type="number" value={lbForm.durationDays} onChange={(e) => setLbForm((p) => ({ ...p, durationDays: Number(e.target.value || 0) }))} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Refresh interval (seconds)</Label>
-                      <Input type="number" value={lbForm.refreshIntervalSec} onChange={(e) => setLbForm((p) => ({ ...p, refreshIntervalSec: Number(e.target.value || 0) }))} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Active</Label>
-                      <div className="flex items-center gap-2">
-                        <input type="checkbox" checked={lbForm.isActive} onChange={(e) => setLbForm((p) => ({ ...p, isActive: e.target.checked }))} />
-                        <span className="text-sm text-muted-foreground">Show publicly + refresh</span>
-                      </div>
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>API URL</Label>
-                      <Input placeholder="https://partner.com/api/leaderboard" value={lbForm.apiUrl} onChange={(e) => setLbForm((p) => ({ ...p, apiUrl: e.target.value }))} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Method</Label>
-                      <select className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm" value={lbForm.apiMethod} onChange={(e) => setLbForm((p) => ({ ...p, apiMethod: e.target.value }))}>
-                        <option value="GET">GET</option>
-                        <option value="POST">POST</option>
-                      </select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Items Path</Label>
-                      <Input placeholder="data.items" value={lbForm.apiItemsPath} onChange={(e) => setLbForm((p) => ({ ...p, apiItemsPath: e.target.value }))} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Rank Field</Label>
-                      <Input value={lbForm.apiRankField} onChange={(e) => setLbForm((p) => ({ ...p, apiRankField: e.target.value }))} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>User Field</Label>
-                      <Input value={lbForm.apiUserField} onChange={(e) => setLbForm((p) => ({ ...p, apiUserField: e.target.value }))} />
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Value Field</Label>
-                      <Input value={lbForm.apiValueField} onChange={(e) => setLbForm((p) => ({ ...p, apiValueField: e.target.value }))} />
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>Headers JSON (server-only)</Label>
-                      <Textarea rows={4} value={lbForm.apiHeadersJson} onChange={(e) => setLbForm((p) => ({ ...p, apiHeadersJson: e.target.value }))} />
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label>Body JSON (for POST)</Label>
-                      <Textarea rows={4} value={lbForm.apiBodyJson} onChange={(e) => setLbForm((p) => ({ ...p, apiBodyJson: e.target.value }))} />
-                    </div>
-                  </div>
-                  <div className="flex justify-end gap-2 mt-6">
-                    <Button variant="outline" onClick={() => setLbDialogOpen(false)}>Cancel</Button>
-                    <Button className="font-display bg-neon-cyan text-black" onClick={() => saveLeaderboard.mutate()} disabled={!lbForm.casinoId || !lbForm.name}>
-                      Save
-                    </Button>
-                  </div>
-                </DialogContent>
-              </Dialog>
-            </TabsContent>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 py-4">
+        <div className="space-y-2">
+          <Label>Partner (Casino)</Label>
+          <select
+            className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+            value={leaderboardForm.casinoId ?? ""}
+            onChange={(e) => setLeaderboardForm((p) => ({ ...p, casinoId: Number(e.target.value) }))}
+          >
+            <option value="" disabled>Select...</option>
+            {casinos.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Name</Label>
+          <Input value={leaderboardForm.name} onChange={(e) => setLeaderboardForm((p) => ({ ...p, name: e.target.value }))} />
+        </div>
+
+        <div className="space-y-2">
+          <Label>Period Type</Label>
+          <select
+            className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+            value={leaderboardForm.periodType}
+            onChange={(e) => setLeaderboardForm((p) => ({ ...p, periodType: e.target.value }))}
+          >
+            <option value="weekly">Weekly</option>
+            <option value="biweekly">Bi-weekly</option>
+            <option value="monthly">Monthly</option>
+            <option value="custom">Custom</option>
+          </select>
+        </div>
+
+        <div className="space-y-2">
+          <Label>Duration (days)</Label>
+          <Input type="number" value={leaderboardForm.durationDays} onChange={(e) => setLeaderboardForm((p) => ({ ...p, durationDays: Number(e.target.value || 0) }))} />
+        </div>
+
+        <div className="space-y-2">
+          <Label>Start (ISO)</Label>
+          <Input value={leaderboardForm.startsAt} onChange={(e) => setLeaderboardForm((p) => ({ ...p, startsAt: e.target.value }))} />
+        </div>
+
+        <div className="space-y-2">
+          <Label>End (ISO)</Label>
+          <Input value={leaderboardForm.endsAt} onChange={(e) => setLeaderboardForm((p) => ({ ...p, endsAt: e.target.value }))} />
+        </div>
+
+        <div className="space-y-2">
+          <Label>Refresh interval (seconds)</Label>
+          <Input type="number" value={leaderboardForm.refreshIntervalSec} onChange={(e) => setLeaderboardForm((p) => ({ ...p, refreshIntervalSec: Number(e.target.value || 0) }))} />
+        </div>
+
+        <div className="space-y-2">
+          <Label>Active</Label>
+          <div className="flex items-center gap-2">
+            <input type="checkbox" checked={leaderboardForm.isActive} onChange={(e) => setLeaderboardForm((p) => ({ ...p, isActive: e.target.checked }))} />
+            <span className="text-sm text-muted-foreground">Show publicly + refresh</span>
+          </div>
+        </div>
+
+        <div className="space-y-2 md:col-span-2">
+          <Label>API Endpoint</Label>
+          <Input placeholder="https://partner.com/api/leaderboard" value={leaderboardForm.apiUrl} onChange={(e) => setLeaderboardForm((p) => ({ ...p, apiEndpoint: e.target.value }))} />
+        </div>
+
+        <div className="space-y-2">
+          <Label>Method</Label>
+          <select
+            className="w-full h-10 rounded-md border border-input bg-background px-3 text-sm"
+            value={leaderboardForm.apiMethod}
+            onChange={(e) => setLeaderboardForm((p) => ({ ...p, apiMethod: e.target.value }))}
+          >
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+          </select>
+        </div>
+
+        <div className="space-y-2 md:col-span-2">
+          <Label>Headers JSON (server-only)</Label>
+          <Textarea rows={4} value={leaderboardForm.apiHeadersJson} onChange={(e) => setLeaderboardForm((p) => ({ ...p, apiHeadersJson: e.target.value }))} />
+        </div>
+
+        <div className="space-y-2 md:col-span-2">
+          <Label>Body JSON (for POST)</Label>
+          <Textarea rows={4} value={leaderboardForm.apiBodyJson} onChange={(e) => setLeaderboardForm((p) => ({ ...p, apiBodyJson: e.target.value }))} />
+        </div>
+
+        <div className="space-y-2 md:col-span-2">
+          <Label>Mapping JSON</Label>
+          <Textarea rows={8} value={leaderboardForm.mappingJson} onChange={(e) => setLeaderboardForm((p) => ({ ...p, apiMappingJson: e.target.value }))} />
+          <p className="text-xs text-muted-foreground">Example: {{"itemsPath":"data.items","rankFieldPath":"rank","usernameFieldPath":"username","userIdFieldPath":"id","valueFieldPath":"value"}}</p>
+        </div>
+      </div>
+
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" onClick={() => setLeaderboardDialogOpen(false)}>Cancel</Button>
+        <Button
+          className="font-display bg-neon-cyan text-black"
+          onClick={() => {
+            if (editingLeaderboard?.id) {
+              updateLeaderboard.mutate({ id: editingLeaderboard.id, data: leaderboardForm });
+            } else {
+              createLeaderboard.mutate(leaderboardForm);
+            }
+          }}
+          disabled={!leaderboardForm.casinoId || !leaderboardForm.name}
+        >
+          Save
+        </Button>
+      </div>
+    </DialogContent>
+  </Dialog>
+</TabsContent>
+
 
             <TabsContent value="site">
               <Card className="glass p-6">

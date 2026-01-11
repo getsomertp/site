@@ -12,6 +12,8 @@ import Admin from "@/pages/Admin";
 import NotFound from "@/pages/not-found";
 
 function Router() {
+  const adminPath = (import.meta as any).env?.VITE_ADMIN_PATH || "/admin";
+
   return (
     <Switch>
       <Route path="/" component={Home} />
@@ -19,7 +21,8 @@ function Router() {
       <Route path="/giveaways" component={Giveaways} />
       <Route path="/affiliates" component={Affiliates} />
       <Route path="/profile" component={Profile} />
-      <Route path="/admin" component={Admin} />
+      <Route path={adminPath} component={Admin} />
+      {adminPath !== "/admin" && <Route path="/admin" component={Admin} />}
       <Route component={NotFound} />
     </Switch>
   );
