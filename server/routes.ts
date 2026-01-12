@@ -16,6 +16,9 @@ import {
   insertLeaderboardSchema
 } from "@shared/schema";
 import { z } from "zod";
+import { db } from "./db";
+import { users as usersTable, userPayments as userPaymentsTable, giveaways as giveawaysTable } from "@shared/schema";
+import { sql as dsql } from "drizzle-orm";
 
 // Admin authentication middleware - uses session-based auth
 function adminAuth(req: Request, res: Response, next: NextFunction) {
@@ -340,6 +343,50 @@ export async function registerRoutes(
     } catch (error) {
       if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
       res.status(500).json({ error: getErrorMessage(error, "Failed to upsert site setting") });
+    }
+  });
+
+  // ============ HOME SUMMARY (real data, no placeholders) ============
+  // Provides stats used on the homepage hero.
+  // You can override any stat by setting a matching key in site_settings:
+  // communityMembers, givenAway, liveHours, winners
+  app.get("/api/home/summary", async (_req: Request, res: Response) => {
+    try {
+      const settingsRows = await storage.getSiteSettings();
+      const settings: Record<string, string> = {};
+      for (const r of settingsRows) settings[r.key] = r.value;
+
+      const [{ count: userCountRaw } = { count: 0 }] = await db
+        .select({ count: dsql<number>`count(*)::int` })
+        .from(usersTable);
+      const userCount = Number(userCountRaw ?? 0);
+
+      const [{ total: totalPaidRaw } = { total: "0" }] = await db
+        .select({ total: dsql<string>`coalesce(sum(${userPaymentsTable.amount}), 0)::text` })
+        .from(userPaymentsTable);
+      const totalPaid = String(totalPaidRaw ?? "0");
+
+      const [{ winners: winnersRaw } = { winners: 0 }] = await db
+        .select({ winners: dsql<number>`count(distinct ${userPaymentsTable.userId})::int` })
+        .from(userPaymentsTable);
+      const winners = Number(winnersRaw ?? 0);
+
+      // Optional: count selected winners from giveaways (if you use winnerId).
+      const [{ giveawayWinners: giveawayWinnersRaw } = { giveawayWinners: 0 }] = await db
+        .select({ giveawayWinners: dsql<number>`count(distinct ${giveawaysTable.winnerId})::int` })
+        .from(giveawaysTable)
+        .where(dsql`${giveawaysTable.winnerId} is not null`);
+      const giveawayWinners = Number(giveawayWinnersRaw ?? 0);
+
+      const out = {
+        communityMembers: settings.communityMembers || String(userCount),
+        givenAway: settings.givenAway || totalPaid,
+        liveHours: settings.liveHours || "0",
+        winners: settings.winners || String(Math.max(winners, giveawayWinners)),
+      };
+      res.json(out);
+    } catch (error) {
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch home summary") });
     }
   });
 
@@ -809,6 +856,31 @@ export async function registerRoutes(
   });
 
   // ============ STREAM EVENTS ============
+
+  // Public: stream games (read-only). These are created/managed in the admin panel,
+  // but viewers can see what's happening on stream.
+  app.get("/api/stream-events", async (req: Request, res: Response) => {
+    try {
+      const type = req.query.type as string | undefined;
+      const status = req.query.status as string | undefined;
+
+      const events = await storage.getStreamEvents(type);
+      const filtered = events
+        .filter((e) => e.status !== "draft")
+        .filter((e) => (!status ? true : e.status === status));
+
+      const withDetails = await Promise.all(
+        filtered.map(async (e) => ({
+          ...e,
+          entries: await storage.getStreamEventEntries(e.id),
+          brackets: e.type === "tournament" ? await storage.getTournamentBrackets(e.id) : [],
+        }))
+      );
+      res.json(withDetails);
+    } catch (error) {
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch stream events") });
+    }
+  });
   
   // Get all stream events (optionally filter by type)
   app.get("/api/admin/stream-events", adminAuth, async (req: Request, res: Response) => {

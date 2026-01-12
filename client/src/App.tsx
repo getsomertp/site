@@ -8,6 +8,7 @@ import Leaderboard from "@/pages/Leaderboard";
 import Giveaways from "@/pages/Giveaways";
 import Affiliates from "@/pages/Affiliates";
 import Profile from "@/pages/Profile";
+import StreamGames from "@/pages/StreamGames";
 import Admin from "@/pages/Admin";
 import NotFound from "@/pages/not-found";
 
@@ -18,6 +19,7 @@ function Router() {
     <Switch>
       <Route path="/" component={Home} />
       <Route path="/leaderboard" component={Leaderboard} />
+      <Route path="/stream-games" component={StreamGames} />
       <Route path="/giveaways" component={Giveaways} />
       <Route path="/affiliates" component={Affiliates} />
       <Route path="/profile" component={Profile} />
