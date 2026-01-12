@@ -20,6 +20,16 @@ function safeJsonParse<T = any>(value: string | null | undefined, fallback: T): 
   }
 }
 
+
+async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
 function getByPath(obj: JsonValue, path: string | null | undefined): any {
   if (!path) return undefined;
   const parts = path.split(".").filter(Boolean);
