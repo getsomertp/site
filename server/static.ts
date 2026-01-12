@@ -2,12 +2,6 @@ import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
 
-/**
- * Production static file serving.
- *
- * - Cache-bust hashed assets aggressively
- * - Never cache index.html (so deploys update immediately)
- */
 export function serveStatic(app: Express) {
   const distPath = path.resolve(__dirname, "public");
   if (!fs.existsSync(distPath)) {
@@ -16,23 +10,10 @@ export function serveStatic(app: Express) {
     );
   }
 
-  app.use(
-    express.static(distPath, {
-      index: false,
-      dotfiles: "ignore",
-      setHeaders: (res, filePath) => {
-        if (filePath.endsWith(".html")) {
-          res.setHeader("Cache-Control", "no-store");
-          return;
-        }
-        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
-      },
-    }),
-  );
+  app.use(express.static(distPath));
 
-  // SPA fallback (client-side routing)
-  app.get("*", (_req, res) => {
-    res.setHeader("Cache-Control", "no-store");
+  // fall through to index.html if the file doesn't exist
+  app.use("*", (_req, res) => {
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }

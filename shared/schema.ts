@@ -1,5 +1,5 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, serial, numeric } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, serial, numeric, json, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -9,6 +9,19 @@ import { z } from "zod";
 // Valid tier options including "none"
 export const CASINO_TIERS = ["platinum", "gold", "silver", "none"] as const;
 export type CasinoTier = typeof CASINO_TIERS[number];
+
+// Sessions table used by connect-pg-simple (express-session).
+// Keeping it in Drizzle schema prevents `drizzle-kit push` from treating it as an unmanaged table.
+export const sessions = pgTable(
+  "session",
+  {
+    sid: varchar("sid").notNull().primaryKey(),
+    sess: json("sess").notNull(),
+    expire: timestamp("expire", { precision: 6 }).notNull(),
+  },
+  (table) => [index("IDX_session_expire").on(table.expire)]
+);
+
 
 // Casinos - Admin managed
 export const casinos = pgTable("casinos", {
