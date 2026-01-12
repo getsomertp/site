@@ -48,19 +48,6 @@ const giveaways = [
   },
 ];
 
-function formatCompactNumber(n: number) {
-  if (!Number.isFinite(n)) return "0";
-  return n.toLocaleString(undefined, { notation: "compact", maximumFractionDigits: 1 });
-}
-
-function formatMoneyCompact(amount: string | number) {
-  const n = typeof amount === "string" ? Number(amount) : amount;
-  if (!Number.isFinite(n)) return "$0";
-  // Compact, but keep the $ sign.
-  const compact = n.toLocaleString(undefined, { notation: "compact", maximumFractionDigits: 1 });
-  return `$${compact}`;
-}
-
 function getRankIcon(rank: number) {
   if (rank === 1) return <Crown className="w-6 h-6 text-neon-gold" />;
   if (rank === 2) return <Medal className="w-6 h-6 text-gray-300" />;
@@ -76,11 +63,6 @@ export default function Home() {
 
   const kickUrl = siteSettings?.kickUrl || "https://kick.com/get-some";
   const discordUrl = siteSettings?.discordUrl || "https://discord.gg/";
-
-  const { data: homeSummary } = useQuery<Record<string, string>>({
-    queryKey: ["/api/home/summary"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-  });
 
   const { data: casinos } = useQuery<any[]>({
     queryKey: ["/api/casinos"],
@@ -127,41 +109,6 @@ export default function Home() {
         avatar: (e.username || "?").slice(0, 2).toUpperCase(),
       }))
     : leaderboardData;
-
-  const { data: activeGiveaways } = useQuery<any[]>({
-    queryKey: ["/api/giveaways/active"],
-    queryFn: getQueryFn({ on401: "throw" }),
-  });
-
-  const giveawayCards = (activeGiveaways && activeGiveaways.length)
-    ? activeGiveaways.slice(0, 3).map((g: any) => {
-        const endsAt = g.endsAt ? new Date(g.endsAt) : null;
-        const ms = endsAt ? (endsAt.getTime() - Date.now()) : 0;
-        const totalSec = Math.max(0, Math.floor(ms / 1000));
-        const d = Math.floor(totalSec / 86400);
-        const h = Math.floor((totalSec % 86400) / 3600);
-        const m = Math.floor((totalSec % 3600) / 60);
-        const endsIn = d > 0 ? `${d}d ${h}h` : `${h}h ${m}m`;
-        const requirement = (g.requirements && g.requirements.length)
-          ? String(g.requirements[0]?.type || "Discord")
-          : "Discord";
-        return {
-          id: g.id,
-          title: g.title,
-          prize: g.prize,
-          entries: Number(g.entries || 0),
-          endsIn,
-          requirement,
-        };
-      })
-    : giveaways;
-
-  const stats = [
-    { label: "Community Members", value: homeSummary?.communityMembers ? formatCompactNumber(Number(homeSummary.communityMembers)) : "—" },
-    { label: "Given Away", value: homeSummary?.givenAway ? formatMoneyCompact(homeSummary.givenAway) : "—" },
-    { label: "Live Hours", value: homeSummary?.liveHours ? formatCompactNumber(Number(homeSummary.liveHours)) : "—" },
-    { label: "Winners", value: homeSummary?.winners ? formatCompactNumber(Number(homeSummary.winners)) : "—" },
-  ];
   return (
     <div className="min-h-screen">
       <Navigation />
@@ -215,7 +162,12 @@ export default function Home() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.4 }}
           >
-            {stats.map((stat) => (
+            {[
+              { label: "Community Members", value: "125K+" },
+              { label: "Given Away", value: "$2.5M+" },
+              { label: "Live Hours", value: "5,000+" },
+              { label: "Winners", value: "50K+" },
+            ].map((stat) => (
               <div key={stat.label} className="glass rounded-xl p-6">
                 <div className="font-display text-3xl sm:text-4xl font-bold text-neon-gold text-glow-gold" data-testid={`stat-${stat.label.toLowerCase().replace(/\s+/g, '-')}`}>
                   {stat.value}
@@ -366,7 +318,6 @@ export default function Home() {
               size="lg" 
               className="font-display bg-neon-purple hover:bg-neon-purple/80"
               data-testid="button-view-full-leaderboard"
-              onClick={() => window.location.href = "/leaderboard"}
             >
               View Full Leaderboard <Trophy className="ml-2 w-5 h-5" />
             </Button>
@@ -394,9 +345,9 @@ export default function Home() {
           </motion.div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {giveawayCards.map((giveaway: any, i: number) => (
+            {giveaways.map((giveaway, i) => (
               <motion.div
-                key={giveaway.id ?? giveaway.title}
+                key={giveaway.title}
                 initial={{ opacity: 0, y: 20 }}
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
@@ -436,7 +387,6 @@ export default function Home() {
                     <Button 
                       className="w-full font-display bg-gradient-to-r from-neon-cyan to-neon-purple hover:opacity-90"
                       data-testid={`button-enter-giveaway-${i}`}
-                      onClick={() => window.location.href = "/giveaways"}
                     >
                       Enter Giveaway
                     </Button>

@@ -1,13 +1,12 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, X, Trophy, Gift, Users, LogIn, Settings, Gamepad2 } from "lucide-react";
+import { Menu, X, Trophy, Gift, Users, LogIn, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 const publicLinks = [
   { href: "/", label: "Home" },
   { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
-  { href: "/stream-games", label: "Stream Games", icon: Gamepad2 },
   { href: "/giveaways", label: "Giveaways", icon: Gift },
   { href: "/affiliates", label: "Affiliates", icon: Users },
   { href: "/profile", label: "Profile", icon: Users },
