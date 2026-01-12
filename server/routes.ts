@@ -1,4 +1,4 @@
-import type { Express, Request, Response, NextFunction } from "express";
+import express, { type Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import homeLeaderboardRouter from "./routes/homeLeaderboard";
@@ -20,6 +20,40 @@ import { z } from "zod";
 import multer from "multer";
 import path from "path";
 import fs from "fs";
+
+import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+
+const uploadsDir = path.join(process.cwd(), "uploads");
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+
+// Use memory storage so we can send to S3/R2
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+});
+
+function getPublicUrl(key: string) {
+  const base = process.env.S3_PUBLIC_BASE_URL;
+  if (base) return `${base.replace(/\/$/, "")}/${key}`;
+  // If no public base is configured, we can't reliably construct a public URL for R2/S3.
+  return null;
+}
+
+function s3Client() {
+  const endpoint = process.env.S3_ENDPOINT;
+  const region = process.env.S3_REGION || "auto";
+  const accessKeyId = process.env.S3_ACCESS_KEY_ID;
+  const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
+  if (!endpoint || !accessKeyId || !secretAccessKey) return null;
+
+  return new S3Client({
+    region,
+    endpoint,
+    credentials: { accessKeyId, secretAccessKey },
+    forcePathStyle: true, // works well with R2
+  });
+}
+
 
 // Admin authentication middleware - uses session-based auth
 function adminAuth(req: Request, res: Response, next: NextFunction) {
@@ -103,6 +137,50 @@ export async function registerRoutes(
 
     // Public home routes
   app.use("/api/home", homeLeaderboardRouter);
+
+// Serve locally stored uploads (used when S3/R2 not configured)
+app.use("/uploads", express.static(uploadsDir));
+
+// Admin: upload casino logo (S3/R2 if configured, else local)
+app.post("/api/admin/uploads/casino-logo", adminAuth, upload.single("logo"), async (req: Request, res: Response) => {
+  try {
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (!file) return res.status(400).json({ error: "No file uploaded" });
+
+    const ext = (file.originalname.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
+    const key = `casinos/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
+
+    const bucket = process.env.S3_BUCKET;
+    const client = s3Client();
+
+    // Prefer S3/R2 if configured
+    if (client && bucket) {
+      await client.send(new PutObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        Body: file.buffer,
+        ContentType: file.mimetype || "application/octet-stream",
+        CacheControl: "public, max-age=31536000, immutable",
+      }));
+
+      const publicUrl = getPublicUrl(key);
+      if (!publicUrl) {
+        return res.status(500).json({ error: "Uploaded to S3, but S3_PUBLIC_BASE_URL is not set (required to form a public URL)." });
+      }
+      return res.json({ url: publicUrl, key });
+    }
+
+    // Fallback: local filesystem
+    const localName = key.replace(/\//g, "_");
+    const outPath = path.join(uploadsDir, localName);
+    fs.writeFileSync(outPath, file.buffer);
+    return res.json({ url: `/uploads/${localName}` });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || "Failed to upload logo" });
+  }
+});
+
+
 
 app.get("/api/auth/me", async (req: Request, res: Response) => {
     try {

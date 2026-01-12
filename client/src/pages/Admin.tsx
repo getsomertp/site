@@ -1,4 +1,29 @@
-import { useState, useEffect } from "react";
+im
+
+async function uploadCasinoLogo(file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("logo", file);
+  const res = await fetch("/api/admin/uploads/casino-logo", {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    // Try JSON first, fall back to raw text
+    try {
+      const j = JSON.parse(txt);
+      throw new Error(j?.error || j?.message || "Upload failed");
+    } catch {
+      throw new Error(txt || "Upload failed");
+    }
+  }
+  const data = await res.json();
+  if (!data?.url) throw new Error("Upload failed: missing url");
+  return data.url as string;
+}
+
+port { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Settings, Plus, Trash2, Edit, Save, X, ExternalLink, Trophy, Gift, Lock, Users, Search, DollarSign, Wallet, Image, Tv, LogIn, LogOut } from "lucide-react";
@@ -663,9 +688,50 @@ const deleteLeaderboard = useMutation({
                           className="bg-white/5"
                           data-testid="input-casino-slug"
                         />
+                      
+</div>
+                      <div>
+                        <Label>Casino Logo</Label>
+                        <div className="flex items-center gap-3">
+                          {casinoForm.logo ? (
+                            <img src={casinoForm.logo} alt="Casino logo" className="w-12 h-12 rounded-xl object-cover border border-white/10" />
+                          ) : (
+                            <div className="w-12 h-12 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-white font-semibold">
+                              {(casinoForm.name || "").slice(0, 2).toUpperCase()}
+                            </div>
+                          )}
+                          <div className="flex-1 space-y-2">
+                            <Input
+                              value={casinoForm.logo}
+                              onChange={(e) => setCasinoForm({ ...casinoForm, logo: e.target.value })}
+                              placeholder="https://.../logo.png (optional)"
+                              className="bg-white/5"
+                              data-testid="input-casino-logo"
+                            />
+                            <Input
+                              type="file"
+                              accept="image/*"
+                              className="bg-white/5"
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                try {
+                                  const url = await uploadCasinoLogo(file);
+                                  setCasinoForm({ ...casinoForm, logo: url });
+                                } catch (err: any) {
+                                  toast({ title: "Logo upload failed", description: err?.message || String(err), variant: "destructive" });
+                                } finally {
+                                  e.currentTarget.value = "";
+                                }
+                              }}
+                            />
+                            <div className="text-xs text-muted-foreground">Uploads to S3/R2 when configured. Falls back to local uploads if not.</div>
+                          </div>
+                        </div>
                       </div>
                       <div>
                         <Label>Affiliate Code</Label>
+
                         <Input 
                           value={casinoForm.affiliateCode}
                           onChange={(e) => setCasinoForm({ ...casinoForm, affiliateCode: e.target.value })}
