@@ -17,6 +17,9 @@ import {
   insertLeaderboardSchema
 } from "@shared/schema";
 import { z } from "zod";
+import multer from "multer";
+import path from "path";
+import fs from "fs";
 
 // Admin authentication middleware - uses session-based auth
 function adminAuth(req: Request, res: Response, next: NextFunction) {

@@ -85,6 +85,7 @@ type CasinoFormData = {
   description: string;
   leaderboardApiUrl: string;
   leaderboardApiKey: string;
+  logo: string;
   features: string;
   sortOrder: number;
   isActive: boolean;
@@ -102,6 +103,7 @@ const defaultCasinoForm: CasinoFormData = {
   description: "",
   leaderboardApiUrl: "",
   leaderboardApiKey: "",
+  logo: "",
   features: "",
   sortOrder: 0,
   isActive: true,
@@ -539,6 +541,7 @@ const deleteLeaderboard = useMutation({
       description: casino.description || "",
       leaderboardApiUrl: casino.leaderboardApiUrl || "",
       leaderboardApiKey: casino.leaderboardApiKey || "",
+      logo: casino.logo || "",
       features: casino.features?.join(", ") || "",
       sortOrder: casino.sortOrder,
       isActive: casino.isActive,

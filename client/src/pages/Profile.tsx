@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { User, Check, Upload, X, ExternalLink, Shield, Wallet, Tv, Copy } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -9,14 +10,6 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Navigation } from "@/components/Navigation";
 
-const casinos = [
-  { id: "stake", name: "Stake", code: "GETSOME", color: "#1a1a2e" },
-  { id: "rollbit", name: "Rollbit", code: "GETSOME150", color: "#ff6b35" },
-  { id: "duelbits", name: "Duelbits", code: "GETSOMEFREE", color: "#00d4aa" },
-  { id: "gamdom", name: "Gamdom", code: "GETSOMERAKE", color: "#7c3aed" },
-  { id: "roobet", name: "Roobet", code: "GETSOMEVIP", color: "#fbbf24" },
-  { id: "bcgame", name: "BC.Game", code: "GETSOMESPIN", color: "#22c55e" },
-];
 
 const mockUser = {
   discord: {
@@ -33,6 +26,18 @@ const mockUser = {
   wallets: {} as Record<string, { address: string; screenshot: string | null }>
 };
 
+
+const { data: casinos = [] } = useQuery({
+  queryKey: ["/api/casinos"],
+  queryFn: async () => {
+    const res = await fetch("/api/casinos");
+    const ct = res.headers.get("content-type") || "";
+    const data = ct.includes("application/json") ? await res.json() : [];
+    return Array.isArray(data) ? data : [];
+  },
+});
+
+
 export default function Profile() {
   const [user] = useState(mockUser);
   const [kickUsername, setKickUsername] = useState("");
@@ -42,32 +47,32 @@ export default function Profile() {
   const [savedWallets, setSavedWallets] = useState<Record<string, boolean>>({});
   const [kickSaved, setKickSaved] = useState(false);
 
-  const handleCasinoChange = (casinoId: string, field: "username" | "odId", value: string) => {
+  const handleCasinoChange = (casinoId: number, field: "username" | "odId", value: string) => {
     setCasinoInputs(prev => ({
       ...prev,
       [casinoId]: { ...prev[casinoId], [field]: value }
     }));
   };
 
-  const handleWalletChange = (casinoId: string, address: string) => {
+  const handleWalletChange = (casinoId: number, address: string) => {
     setWalletInputs(prev => ({
       ...prev,
       [casinoId]: { ...prev[casinoId], address }
     }));
   };
 
-  const handleFileUpload = (casinoId: string, file: File | null) => {
+  const handleFileUpload = (casinoId: number, file: File | null) => {
     setWalletInputs(prev => ({
       ...prev,
       [casinoId]: { ...prev[casinoId], file }
     }));
   };
 
-  const saveCasino = (casinoId: string) => {
+  const saveCasino = (casinoId: number) => {
     setSavedCasinos(prev => ({ ...prev, [casinoId]: true }));
   };
 
-  const saveWallet = (casinoId: string) => {
+  const saveWallet = (casinoId: number) => {
     setSavedWallets(prev => ({ ...prev, [casinoId]: true }));
   };
 
@@ -376,7 +381,7 @@ export default function Profile() {
             className="mt-8 p-4 bg-neon-gold/10 border border-neon-gold/30 rounded-lg"
           >
             <p className="text-sm text-neon-gold text-center">
-              ⚠️ This is a mockup. To save data permanently, upgrade to a full application with database support.
+              ⚠️ 
             </p>
           </motion.div>
         </div>
