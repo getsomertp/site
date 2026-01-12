@@ -7,15 +7,6 @@ import { Card } from "@/components/ui/card";
 import { Navigation } from "@/components/Navigation";
 import heroBg from "@assets/generated_images/dark_neon_casino_background.png";
 
-const sponsors = [
-  { name: "Stake", tier: "platinum", bonus: "200% Deposit Bonus" },
-  { name: "Rollbit", tier: "gold", bonus: "150% Welcome Bonus" },
-  { name: "Duelbits", tier: "gold", bonus: "$100 Free Play" },
-  { name: "Gamdom", tier: "silver", bonus: "15% Rakeback" },
-  { name: "Roobet", tier: "silver", bonus: "Exclusive Rewards" },
-  { name: "BC.Game", tier: "silver", bonus: "Lucky Spin Bonus" },
-];
-
 const leaderboardData = [
   { rank: 1, username: "CryptoKing", wagered: 2450000, prize: "$50,000", avatar: "CK" },
   { rank: 2, username: "LuckyDegen", wagered: 1890000, prize: "$25,000", avatar: "LD" },
@@ -56,6 +47,32 @@ function getRankIcon(rank: number) {
 }
 
 export default function Home() {
+  const { data: casinos = [] } = useQuery<Casino[]>({ queryKey: ["/api/casinos"] });
+  const { data: giveaways = [] } = useQuery<Giveaway[]>({ queryKey: ["/api/giveaways/active"] });
+  const { data: siteSettings = [] } = useQuery<SiteSetting[]>({ queryKey: ["/api/site/settings"] });
+
+  // Top casino for the homepage leaderboard (server decides)
+  const { data: topCasino } = useQuery<HomeTopCasino>({ queryKey: ["/api/home/leaderboard"] });
+
+  const activeCasinos = (casinos || []).filter(c => c.isActive);
+  const sponsors = activeCasinos.slice(0, 6).map(c => ({ name: c.name, tier: c.tier || "gold", bonus: c.bonusText || c.welcomeBonus || "Exclusive bonus" }));
+
+  const settingsMap = Object.fromEntries((siteSettings || []).map(s => [s.key, s.value]));
+  const communityMembers = Number(settingsMap.communityMembers || 0);
+  const totalGivenAway = Number(settingsMap.totalGivenAway || 0);
+  const totalWinners = Number(settingsMap.totalWinners || 0);
+  const liveHours = Number(settingsMap.liveHours || 0);
+
+  const activeGiveaways = (giveaways || []).slice(0, 3).map(g => ({
+    title: g.title,
+    prize: g.prizePool ? `$${Number(g.prizePool).toLocaleString()}` : (g.prizeText || g.prize || "Prize"),
+    entries: g.entriesCount ?? 0,
+    endsIn: g.endAt ? new Date(g.endAt).toLocaleString() : "",
+    requirement: g.requirementText || "" 
+  }));
+
+  const leaderboardLink = topCasino?.casino?.slug ? `/casino/${topCasino.casino.slug}` : "/leaderboard";
+
   const { data: siteSettings } = useQuery<Record<string, string>>({
     queryKey: ["/api/site/settings"],
     queryFn: getQueryFn({ on401: "throw" }),
@@ -163,7 +180,7 @@ export default function Home() {
             transition={{ delay: 0.4 }}
           >
             {[
-              { label: "Community Members", value: "125K+" },
+              { label: "Community Members", value: "12{`${liveHours.toLocaleString()}`}" },
               { label: "Given Away", value: "$2.5M+" },
               { label: "Live Hours", value: "5,000+" },
               { label: "Winners", value: "50K+" },
@@ -421,7 +438,7 @@ export default function Home() {
                 </h2>
                 <p className="text-muted-foreground text-lg mb-8 max-w-xl mx-auto">
                   Connect your Discord to access exclusive giveaways, get notified when we go live, 
-                  and join 125K+ degens winning together.
+                  and join 12{`${liveHours.toLocaleString()}`} degens winning together.
                 </p>
                 
                 <div className="flex flex-col sm:flex-row gap-4 justify-center">

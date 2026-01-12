@@ -1,6 +1,7 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import homeLeaderboardRouter from "./routes/homeLeaderboard";
 import passport from "passport";
 import rateLimit from "express-rate-limit";
 import crypto from "crypto";
@@ -97,7 +98,10 @@ export async function registerRoutes(
 
   // ============ USER AUTH (DISCORD) ============
 
-  app.get("/api/auth/me", async (req: Request, res: Response) => {
+    // Public home routes
+  app.use("/api/home", homeLeaderboardRouter);
+
+app.get("/api/auth/me", async (req: Request, res: Response) => {
     try {
       const userId = req.session?.userId;
       if (!userId) return res.json({ user: null });
@@ -811,7 +815,20 @@ export async function registerRoutes(
   // ============ STREAM EVENTS ============
   
   // Get all stream events (optionally filter by type)
-  app.get("/api/admin/stream-events", adminAuth, async (req: Request, res: Response) => {
+  
+// Public stream games (read-only)
+app.get("/api/stream-events", async (req, res) => {
+  try {
+    const type = typeof req.query.type === "string" ? req.query.type : undefined;
+    const events = await storage.getStreamEvents(type);
+    const publicEvents = (events || []).filter(e => e.status !== "draft");
+    res.json(publicEvents);
+  } catch (err: any) {
+    res.status(500).json({ error: err?.message || "Failed to fetch stream events" });
+  }
+});
+
+app.get("/api/admin/stream-events", adminAuth, async (req: Request, res: Response) => {
     try {
       const type = req.query.type as string | undefined;
       const events = await storage.getStreamEvents(type);

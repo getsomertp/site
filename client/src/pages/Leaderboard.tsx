@@ -96,7 +96,9 @@ export default function Leaderboard() {
       }
     : undefined;
 
-  const prizePool = period === "monthly" ? "$150,000" : period === "weekly" ? "$25,000" : "Eternal Glory";
+  const prizePool = "--";
+
+  const resetTime = selectedLb?.endAt ? new Date(selectedLb.endAt).toLocaleString() : (selectedLb?.startAt && selectedLb?.durationDays ? new Date(new Date(selectedLb.startAt).getTime() + selectedLb.durationDays*24*60*60*1000).toLocaleString() : "--");
 
   return (
     <div className="min-h-screen">
