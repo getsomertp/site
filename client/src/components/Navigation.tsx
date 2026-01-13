@@ -20,19 +20,36 @@ export function Navigation() {
   const [sessionUser, setSessionUser] = useState<null | { id: string; discordId?: string | null; discordUsername?: string | null; discordAvatar?: string | null }>(null);
   
   useEffect(() => {
-    fetch("/api/admin/me", { credentials: "include" })
-      .then((res) => res.json())
-      .then((data) => setIsAdmin(Boolean(data?.isAdmin)))
-      .catch(() => setIsAdmin(false));
+    let cancelled = false;
 
-    fetch("/api/auth/me", { credentials: "include" })
-      .then((res) => res.json())
-      .then((data) => setSessionUser(data?.user ?? null))
-      .catch(() => setSessionUser(null));
+    const load = async () => {
+      try {
+        const adminRes = await fetch("/api/admin/me", { credentials: "include" });
+        const adminData = await adminRes.json().catch(() => ({}));
+        if (!cancelled) setIsAdmin(Boolean(adminData?.isAdmin));
+      } catch {
+        if (!cancelled) setIsAdmin(false);
+      }
+
+      try {
+        const meRes = await fetch("/api/auth/me", { credentials: "include" });
+        const meData = await meRes.json().catch(() => ({}));
+        if (!cancelled) setSessionUser(meData?.user ?? null);
+      } catch {
+        if (!cancelled) setSessionUser(null);
+      }
+    };
+
+    load();
+
+    const onFocus = () => load();
+    window.addEventListener("focus", onFocus);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("focus", onFocus);
+    };
   }, [location]);
-
-
-  const isLoggedIn = Boolean(sessionUser?.id);
+const isLoggedIn = Boolean(sessionUser?.id);
   const avatarUrl = (() => {
     const did = sessionUser?.discordId;
     const av = sessionUser?.discordAvatar;

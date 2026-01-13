@@ -1,5 +1,6 @@
 import { useMemo, useState, type Dispatch, type SetStateAction, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSession } from "@/hooks/useSession";
 import { motion } from "framer-motion";
 import { Calendar, Trophy, Zap, LogIn, Users } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
@@ -30,10 +31,8 @@ export default function StreamGames() {
   const { toast } = useToast();
   const [slotByEvent, setSlotByEvent] = useState<Record<number, string>>({});
 
-  const { data: session } = useQuery<{ user: any | null }>({
-    queryKey: ["/api/auth/me"],
-  });
-  const isLoggedIn = Boolean(session?.user?.id);
+  const { data: session } = useSession();
+const isLoggedIn = Boolean(session?.user?.id);
 
   const { data: events = [], isLoading } = useQuery<StreamEvent[]>({
     queryKey: ["/api/stream-events"],

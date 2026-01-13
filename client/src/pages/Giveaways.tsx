@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSession } from "@/hooks/useSession";
 import { motion } from "framer-motion";
 import { Gift, Clock, Users, CheckCircle, Lock, Sparkles, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -48,10 +49,8 @@ export default function Giveaways() {
   const [filter, setFilter] = useState<"all" | "active" | "ended">("all");
 
   const queryClient = useQueryClient();
-  const { data: session } = useQuery<{ user: any | null }>({
-    queryKey: ["/api/auth/me"],
-  });
-  const isLoggedIn = Boolean(session?.user?.id);
+  const { data: session } = useSession();
+const isLoggedIn = Boolean(session?.user?.id);
 
   const beginDiscordLogin = () => {
     window.location.href = "/api/auth/discord";

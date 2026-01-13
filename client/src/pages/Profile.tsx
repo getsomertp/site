@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useSession } from "@/hooks/useSession";
 import { motion } from "framer-motion";
 import { User, Check, Upload, X, Shield, Wallet, Tv, Copy, Loader2 } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -29,11 +30,8 @@ function safeInitials(name: string) {
 }
 
 export default function Profile() {
-  const { data: session, isLoading: sessionLoading } = useQuery<SessionResponse>({
-    queryKey: ["/api/auth/me"],
-  });
-
-  const isLoggedIn = Boolean(session?.user?.id);
+  const { data: session, isLoading: sessionLoading } = useSession();
+const isLoggedIn = Boolean(session?.user?.id);
 
   const beginDiscordLogin = () => {
     window.location.href = "/api/auth/discord";
