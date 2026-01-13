@@ -463,15 +463,6 @@ export default function Profile() {
               </div>
             </TabsContent>
           </Tabs>
-
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.3 }}
-            className="mt-8 p-4 bg-neon-gold/10 border border-neon-gold/30 rounded-lg"
-          >
-            <p className="text-sm text-neon-gold text-center">⚠️ Make sure your details are accurate — payouts require verification.</p>
-          </motion.div>
         </div>
       </div>
     </div>
