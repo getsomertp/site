@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
 import { Trophy, Gift, Users, Zap, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -7,27 +7,26 @@ import { Card } from "@/components/ui/card";
 import { Navigation } from "@/components/Navigation";
 import heroBg from "@assets/generated_images/dark_neon_casino_background.png";
 import { normalizeExternalUrl } from "@/lib/url";
+import { useSession } from "@/hooks/useSession";
+import { useToast } from "@/hooks/use-toast";
+import type { Giveaway, GiveawayRequirement } from "@shared/schema";
 
 type Casino = {
   id: number;
   name: string;
   slug: string;
   affiliateLink?: string | null;
+  logo?: string | null;
   tier?: string | null;
   welcomeBonus?: string | null;
   bonusText?: string | null;
   isActive?: boolean | null;
 };
 
-type Giveaway = {
-  id: number;
-  title: string;
-  prizeText?: string | null;
-  prize?: string | null;
-  prizePool?: number | null;
-  entriesCount?: number | null;
-  endAt?: string | null;
-  requirementText?: string | null;
+type GiveawayWithDetails = Giveaway & {
+  entries: number;
+  requirements: GiveawayRequirement[];
+  hasEntered?: boolean;
 };
 
 type HomeLeaderboard = null | {
@@ -40,15 +39,120 @@ function formatMoney(n: number) {
   return `$${Number(n || 0).toLocaleString()}`;
 }
 
+function formatRequirements(requirements: GiveawayRequirement[]): string {
+  if (!requirements || requirements.length === 0) return "No Requirement";
+  return requirements
+    .map((r) => {
+      switch (r.type) {
+        case "discord":
+          return "Discord Member";
+        case "wager":
+          return `Wager ${r.value || ""}`.trim();
+        case "vip":
+          return "VIP Status";
+        case "linked_account":
+          return "Linked Casino Account";
+        default:
+          return r.type;
+      }
+    })
+    .join(", ");
+}
+
+function formatTimeRemaining(endsAt: Date | string): string {
+  const end = new Date(endsAt);
+  const now = new Date();
+  const diff = end.getTime() - now.getTime();
+
+  if (diff <= 0) return "Ended";
+
+  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+
+  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
 export default function Home() {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const { data: session } = useSession();
+  const userId = (session as any)?.user?.id as string | undefined;
+  const isLoggedIn = Boolean(userId);
+
+  const beginDiscordLogin = () => {
+    window.location.href = "/api/auth/discord";
+  };
+
   const { data: casinos = [] } = useQuery<Casino[]>({
     queryKey: ["/api/casinos"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
-  const { data: giveaways = [] } = useQuery<Giveaway[]>({
+  const { data: giveaways = [] } = useQuery<GiveawayWithDetails[]>({
     queryKey: ["/api/giveaways/active"],
     queryFn: getQueryFn({ on401: "returnNull" }),
+  });
+
+  // Logged-in user's linked casino accounts (used for requirement checks)
+  const { data: userProfile } = useQuery<any>({
+    queryKey: [userId ? `/api/users/${userId}` : "/api/users/0"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    enabled: !!userId,
+  });
+
+  const requirementMet = (requirements: GiveawayRequirement[]) => {
+    if (!requirements || requirements.length === 0) return true;
+    if (!isLoggedIn) return false;
+
+    const accounts: Array<{ casinoId: number; verified: boolean }> =
+      (userProfile?.casinoAccounts || []).map((a: any) => ({
+        casinoId: Number(a.casinoId),
+        verified: Boolean(a.verified),
+      }));
+
+    for (const r of requirements) {
+      if (r.type === "discord") continue;
+      if (r.type === "linked_account") {
+        const v = String((r as any).value || "").trim().toLowerCase();
+        const requireVerified = v === "verified" || v === "true" || v === "1" || v === "yes";
+
+        const ok = accounts.some(
+          (a) =>
+            (!r.casinoId || a.casinoId === Number(r.casinoId)) &&
+            (!requireVerified || a.verified),
+        );
+        if (!ok) return false;
+        continue;
+      }
+      // Other requirement types (vip/wager) are not implemented yet
+      return false;
+    }
+    return true;
+  };
+
+  const enterGiveaway = useMutation({
+    mutationFn: async (giveawayId: number) => {
+      const res = await fetch(`/api/giveaways/${giveawayId}/enter`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Failed to enter giveaway");
+      return data;
+    },
+    onSuccess: () => {
+      toast({ title: "Entered giveaway" });
+      queryClient.invalidateQueries({ queryKey: ["/api/giveaways/active"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/giveaways"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not enter", description: err?.message || "Try again", variant: "destructive" });
+    },
   });
 
   const { data: siteSettings = {} } = useQuery<Record<string, string>>({
@@ -224,6 +328,10 @@ export default function Home() {
             <h2 className="text-2xl font-bold text-white">Giveaways</h2>
             <p className="text-muted-foreground">Active giveaways running on stream.</p>
           </div>
+
+          <Button variant="outline" asChild>
+            <a href="/giveaways">View All</a>
+          </Button>
         </div>
 
         <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -239,19 +347,59 @@ export default function Home() {
               <Card key={g.id} className="p-6">
                 <div className="text-white font-semibold">{g.title}</div>
                 <div className="mt-2 text-2xl font-bold text-neon-gold">
-                  {g.prizePool ? formatMoney(g.prizePool) : (g.prizeText || g.prize || "Prize")}
+                  {g.prize}
                 </div>
                 <div className="mt-3 text-sm text-muted-foreground">
-                  Entries: {(g.entriesCount ?? 0).toLocaleString()}
+                  Entries: {(g.entries ?? 0).toLocaleString()}{g.maxEntries ? ` / ${g.maxEntries.toLocaleString()}` : ""}
                 </div>
                 <div className="mt-1 text-sm text-muted-foreground">
-                  Ends: {g.endAt ? new Date(g.endAt).toLocaleString() : "—"}
+                  Ends: {g.endsAt ? formatTimeRemaining(g.endsAt as any) : "—"}
                 </div>
-                {g.requirementText ? (
-                  <div className="mt-3 text-xs text-muted-foreground">
-                    Requirement: {g.requirementText}
-                  </div>
-                ) : null}
+
+                <div className="mt-3 text-xs text-muted-foreground">
+                  Requirement: {formatRequirements(g.requirements || [])}
+                </div>
+
+                <div className="mt-4 flex gap-2">
+                  {!isLoggedIn ? (
+                    <Button className="w-full" onClick={beginDiscordLogin}>
+                      Connect Discord
+                    </Button>
+                  ) : (
+                    (() => {
+                      const met = requirementMet(g.requirements || []);
+                      const needsLinked = (g.requirements || []).some((r) => r.type === "linked_account");
+
+                      if (!met) {
+                        return (
+                          <Button className="w-full" variant="outline" asChild>
+                            <a href={needsLinked ? "/profile" : "/giveaways"}>
+                              {needsLinked ? "Link Account" : "View Details"}
+                            </a>
+                          </Button>
+                        );
+                      }
+
+                      if ((g as any).hasEntered) {
+                        return (
+                          <Button className="w-full" variant="secondary" disabled>
+                            Already Entered
+                          </Button>
+                        );
+                      }
+
+                      return (
+                        <Button
+                          className="w-full"
+                          disabled={enterGiveaway.isPending}
+                          onClick={() => enterGiveaway.mutate(g.id)}
+                        >
+                          {enterGiveaway.isPending ? "Entering..." : "Enter"}
+                        </Button>
+                      );
+})()
+                  )}
+                </div>
               </Card>
             ))
           )}

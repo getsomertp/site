@@ -99,6 +99,7 @@ export interface IStorage {
   getGiveawayEntries(giveawayId: number): Promise<GiveawayEntry[]>;
   getGiveawayEntryCount(giveawayId: number): Promise<number>;
   hasUserEntered(giveawayId: number, userId: string): Promise<boolean>;
+  getUserEnteredGiveawayIds(userId: string): Promise<number[]>;
   createGiveawayEntry(entry: InsertGiveawayEntry): Promise<GiveawayEntry>;
   
   // Giveaway Requirements
@@ -417,6 +418,15 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(giveawayEntries.giveawayId, giveawayId), eq(giveawayEntries.userId, userId)));
     return !!entry;
   }
+
+  async getUserEnteredGiveawayIds(userId: string): Promise<number[]> {
+    const rows = await db
+      .select({ giveawayId: giveawayEntries.giveawayId })
+      .from(giveawayEntries)
+      .where(eq(giveawayEntries.userId, userId));
+    return rows.map(r => Number(r.giveawayId));
+  }
+
 
   async createGiveawayEntry(entry: InsertGiveawayEntry): Promise<GiveawayEntry> {
     const [result] = await db.insert(giveawayEntries).values(entry).returning();

@@ -742,16 +742,42 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   });
 
   // ============ GIVEAWAYS ============
-  
+  // If a giveaway is tied to a casino, we implicitly require that casino to be linked
+  // (so selecting a casino in the admin UI can't accidentally create an unenforced giveaway).
+  const withImplicitGiveawayRequirements = (giveaway: any, reqs: any[]) => {
+    const requirements = Array.isArray(reqs) ? [...reqs] : [];
+    const casinoId = giveaway?.casinoId ? Number(giveaway.casinoId) : null;
+    if (casinoId) {
+      const hasSpecific = requirements.some(
+        (r) => r?.type === "linked_account" && Number(r?.casinoId) === casinoId
+      );
+      if (!hasSpecific) {
+        requirements.push({
+          id: 0,
+          giveawayId: giveaway.id,
+          type: "linked_account",
+          casinoId,
+          value: "linked",
+          createdAt: new Date(),
+        });
+      }
+    }
+    return requirements;
+  };
+
   // Get all giveaways
   app.get("/api/giveaways", async (req: Request, res: Response) => {
     try {
       const giveaways = await storage.getGiveaways();
+      const userId = (req.session as any)?.userId as string | undefined;
+      const enteredSet = userId ? new Set(await storage.getUserEnteredGiveawayIds(userId)) : null;
+
       const giveawaysWithDetails = await Promise.all(
         giveaways.map(async (g) => ({
           ...g,
           entries: await storage.getGiveawayEntryCount(g.id),
-          requirements: await storage.getGiveawayRequirements(g.id),
+          requirements: withImplicitGiveawayRequirements(g, await storage.getGiveawayRequirements(g.id)),
+          hasEntered: enteredSet ? enteredSet.has(g.id) : false,
         }))
       );
       res.json(giveawaysWithDetails);
@@ -764,11 +790,15 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   app.get("/api/giveaways/active", async (req: Request, res: Response) => {
     try {
       const giveaways = await storage.getActiveGiveaways();
+      const userId = (req.session as any)?.userId as string | undefined;
+      const enteredSet = userId ? new Set(await storage.getUserEnteredGiveawayIds(userId)) : null;
+
       const giveawaysWithDetails = await Promise.all(
         giveaways.map(async (g) => ({
           ...g,
           entries: await storage.getGiveawayEntryCount(g.id),
-          requirements: await storage.getGiveawayRequirements(g.id),
+          requirements: withImplicitGiveawayRequirements(g, await storage.getGiveawayRequirements(g.id)),
+          hasEntered: enteredSet ? enteredSet.has(g.id) : false,
         }))
       );
       res.json(giveawaysWithDetails);
@@ -786,8 +816,10 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
         return res.status(404).json({ error: "Giveaway not found" });
       }
       const entries = await storage.getGiveawayEntryCount(id);
-      const requirements = await storage.getGiveawayRequirements(id);
-      res.json({ ...giveaway, entries, requirements });
+      const requirements = withImplicitGiveawayRequirements(giveaway, await storage.getGiveawayRequirements(id));
+      const userId = (req.session as any)?.userId as string | undefined;
+      const hasEntered = userId ? await storage.hasUserEntered(id, userId) : false;
+      res.json({ ...giveaway, entries, requirements, hasEntered });
     } catch (error) {
       res.status(500).json({ error: getErrorMessage(error, "Failed to fetch giveaway") });
     }
@@ -816,7 +848,7 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
         await storage.setGiveawayRequirements(giveaway.id, requirements);
       }
       
-      const reqs = await storage.getGiveawayRequirements(giveaway.id);
+      const reqs = withImplicitGiveawayRequirements(giveaway, await storage.getGiveawayRequirements(giveaway.id));
       res.status(201).json({ ...giveaway, requirements: reqs });
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -852,7 +884,7 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
         await storage.setGiveawayRequirements(id, requirements);
       }
       
-      const reqs = await storage.getGiveawayRequirements(id);
+      const reqs = withImplicitGiveawayRequirements(giveaway, await storage.getGiveawayRequirements(id));
       res.json({ ...giveaway, requirements: reqs });
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -894,22 +926,51 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
         return res.status(400).json({ error: "Already entered this giveaway" });
       }
 
-      // Enforce requirements (minimal implementation)
-      const requirements = await storage.getGiveawayRequirements(giveawayId);
+      // Enforce requirements (supports discord + linked_account; other types are not yet implemented)
+      const requirements = withImplicitGiveawayRequirements(
+        giveaway,
+        await storage.getGiveawayRequirements(giveawayId)
+      );
+
       for (const r of requirements) {
         if (r.type === "discord") {
-          // Already satisfied if logged in via Discord
+          // Already satisfied if logged in via Discord (requireAuth)
           continue;
         }
+
         if (r.type === "linked_account") {
           const accounts = await storage.getUserCasinoAccounts(userId);
-          const ok = accounts.some(a => (r.casinoId ? a.casinoId === r.casinoId : true) && a.verified);
-          if (!ok) return res.status(403).json({ error: "Requirement not met: linked casino account" });
+          const requiredCasinoId = r.casinoId ? Number(r.casinoId) : null;
+
+          const v = String(r.value || "").trim().toLowerCase();
+          const requireVerified = v === "verified" || v === "true" || v === "1" || v === "yes";
+
+          const ok = accounts.some((a) => {
+            const casinoOk = requiredCasinoId ? Number(a.casinoId) === requiredCasinoId : true;
+            const verifiedOk = requireVerified ? Boolean(a.verified) : true;
+            return casinoOk && verifiedOk;
+          });
+
+          if (!ok) {
+            return res.status(403).json({
+              error: requireVerified
+                ? "Requirement not met: verified linked casino account"
+                : "Requirement not met: linked casino account",
+              requirement: {
+                type: "linked_account",
+                casinoId: requiredCasinoId,
+                verified: requireVerified,
+              },
+            });
+          }
+          continue;
         }
+
         if (r.type === "vip") {
           // VIP status not implemented in this codebase
           return res.status(501).json({ error: "Requirement type not implemented: vip" });
         }
+
         if (r.type === "wager") {
           // Wager checks require external casino integration (not implemented)
           return res.status(501).json({ error: "Requirement type not implemented: wager" });
