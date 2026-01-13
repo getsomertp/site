@@ -63,6 +63,7 @@ export default function Leaderboard() {
 
   const activeCasinos = casinos.filter(c => c.isActive);
   const selectedCasino = casinos.find(c => c.slug === selectedCasinoSlug) || activeCasinos[0];
+  const selectedCasinoTier = (selectedCasino?.tier || "none") as string;
 
   const selectedLb = activeLeaderboards.find((lb: any) => lb.periodType === period && (!selectedCasino || lb.casinoId === selectedCasino.id))
     || activeLeaderboards.find((lb: any) => !selectedCasino || lb.casinoId === selectedCasino.id);
@@ -180,9 +181,9 @@ export default function Leaderboard() {
                           )}
                           <div>
                             <h3 className="font-display font-bold text-white">{selectedCasino.name}</h3>
-                            {selectedCasino.tier !== "none" && (
+                            {selectedCasinoTier !== "none" && (
                               <span className={`text-xs px-2 py-0.5 rounded-full bg-gradient-to-r ${getTierColor(selectedCasino.tier)} text-white`}>
-                                {selectedCasino.tier.toUpperCase()}
+                                {selectedCasinoTier.toUpperCase()}
                               </span>
                             )}
                           </div>
