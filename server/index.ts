@@ -139,12 +139,18 @@ if (pgPool) {
 
 app.use(
   session({
+    // When behind a proxy (Railway), this helps secure cookies behave correctly
+    // (Together with app.set('trust proxy', 1) above.)
+    proxy: true,
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
     store,
     cookie: {
-      secure: process.env.NODE_ENV === "production",
+      // Use "auto" in production so cookies still set correctly when HTTPS
+      // terminates at the proxy (Railway) and the app sees proxied traffic.
+      // Type cast is needed because TS types are boolean-only.
+      secure: (process.env.NODE_ENV === "production" ? ("auto" as any) : false),
       httpOnly: true,
       sameSite: "lax",
       maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days

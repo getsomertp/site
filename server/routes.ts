@@ -304,11 +304,29 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
     },
     async (req: Request, res: Response) => {
       const user = req.user as any;
-      if (user?.id) {
+      if (!user?.id) {
+        return res.redirect("/");
+      }
+
+      // Regenerate session on login to avoid session fixation and ensure a fresh
+      // session id is issued after OAuth.
+      req.session.regenerate((regenErr) => {
+        if (regenErr) {
+          console.error("⚠️ Session regenerate failed", regenErr);
+          // Best-effort fallback: still try to set session fields
+          req.session.userId = user.id;
+          req.session.isAdmin = Boolean(user.isAdmin);
+          return req.session.save(() => res.redirect("/"));
+        }
+
         req.session.userId = user.id;
         req.session.isAdmin = Boolean(user.isAdmin);
-      }
-      req.session.save(() => res.redirect("/"));
+
+        req.session.save((saveErr) => {
+          if (saveErr) console.error("⚠️ Session save failed", saveErr);
+          res.redirect("/");
+        });
+      });
     },
   );
 
