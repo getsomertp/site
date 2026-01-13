@@ -43,6 +43,15 @@ const pgPool = process.env.DATABASE_URL
   : null;
 
 async function ensureSessionTable(pool: pg.Pool) {
+  // Some parts of the schema use gen_random_uuid() (pgcrypto). We try to enable it
+  // automatically so first-time deploys don"t break Discord login / user creation.
+  try {
+    await pool.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto";');
+    log("✅ pgcrypto extension ready", "db");
+  } catch (err) {
+    console.error("⚠️ Failed to ensure pgcrypto extension", err);
+  }
+
   // connect-pg-simple expects a table named "session"
   await pool.query(`
     CREATE TABLE IF NOT EXISTS "session" (

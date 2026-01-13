@@ -107,14 +107,32 @@ function requireSameOrigin(req: Request, res: Response, next: NextFunction) {
   return next();
 }
 
+function getAuthedUserId(req: Request): string | undefined {
+  // Primary: our own session field
+  const sessionId = req.session?.userId;
+  if (sessionId) return sessionId;
+
+  // Fallback: passport user (if present)
+  const passportUser = (req.user as any)?.id ?? (req.session as any)?.passport?.user;
+  if (passportUser) return String(passportUser);
+
+  return undefined;
+}
+
 function requireAuth(req: Request, res: Response, next: NextFunction) {
-  if (req.session?.userId) return next();
+  const userId = getAuthedUserId(req);
+  if (userId) {
+    // Self-heal: if passport authenticated but our session.userId isn't set, persist it.
+    if (req.session && !req.session.userId) req.session.userId = userId;
+    return next();
+  }
   return res.status(401).json({ error: "Unauthorized - Login required" });
 }
 
 function requireSelfOrAdmin(req: Request, res: Response, next: NextFunction) {
   const targetUserId = req.params.id;
-  if (req.session?.isAdmin || req.session?.userId === targetUserId) return next();
+  const userId = getAuthedUserId(req);
+  if (req.session?.isAdmin || (userId && userId === targetUserId)) return next();
   return res.status(403).json({ error: "Forbidden" });
 }
 
@@ -237,8 +255,13 @@ app.post("/api/admin/uploads/casino-logo", adminAuth, upload.single("logo"), asy
 
 app.get("/api/auth/me", async (req: Request, res: Response) => {
     try {
-      const userId = req.session?.userId;
+      const userId = getAuthedUserId(req);
       if (!userId) return res.json({ user: null });
+
+      // Self-heal: persist userId into our session for downstream APIs.
+      if (req.session && !req.session.userId) {
+        req.session.userId = userId;
+      }
 
       const user = await storage.getUser(userId);
       if (!user) {
@@ -281,23 +304,17 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
     },
     async (req: Request, res: Response) => {
       const user = req.user as any;
-      // Prevent session fixation by regenerating the session on login
-      req.session.regenerate((err) => {
-        if (err) {
-          return res.status(500).json({ error: "Login failed" });
-        }
-        if (user?.id) {
-          req.session.userId = user.id;
-          req.session.isAdmin = Boolean(user.isAdmin);
-        }
-        req.session.save(() => res.redirect("/"));
-      });
+      if (user?.id) {
+        req.session.userId = user.id;
+        req.session.isAdmin = Boolean(user.isAdmin);
+      }
+      req.session.save(() => res.redirect("/"));
     },
   );
 
   app.post("/api/auth/logout", (req: Request, res: Response) => {
     req.session.destroy((err) => {
-      if (err) return res.status(500).json({ error: getErrorMessage(error, "Logout failed") });
+      if (err) return res.status(500).json({ error: getErrorMessage(err, "Logout failed") });
       res.json({ success: true });
     });
   });
@@ -339,7 +356,7 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
           req.session.isAdmin = true;
           req.session.save((err) => {
             if (err) {
-              return res.status(500).json({ error: getErrorMessage(error, "Login failed") });
+              return res.status(500).json({ error: getErrorMessage(err, "Login failed") });
             }
             return res.json({ success: true });
           });
@@ -357,7 +374,7 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   app.post("/api/admin/logout", (req: Request, res: Response) => {
     req.session.destroy((err) => {
       if (err) {
-        return res.status(500).json({ error: getErrorMessage(error, "Logout failed") });
+        return res.status(500).json({ error: getErrorMessage(err, "Logout failed") });
       }
       res.json({ success: true });
     });
