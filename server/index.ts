@@ -130,6 +130,7 @@ if (pgPool) {
     store = new PgSessionStore({
       pool: pgPool,
       tableName: "session",
+      createTableIfMissing: true,
     });
   } catch (err) {
     console.error("⚠️ Failed to initialize session table/store; falling back to in-memory sessions.", err);
