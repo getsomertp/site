@@ -180,7 +180,11 @@ export default function Home() {
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     {c.logo ? (
-                      <img src={c.logo} alt={`${c.name} logo`} className="w-10 h-10 rounded-xl object-cover" />
+                      <img
+                        src={c.logo}
+                        alt={`${c.name} logo`}
+                        className="w-10 h-10 rounded-xl object-cover"
+                      />
                     ) : (
                       <div className="w-10 h-10 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-white font-semibold">
                         {(c.name || "").slice(0, 2).toUpperCase()}
@@ -188,10 +192,12 @@ export default function Home() {
                     )}
                     <div>
                       <div className="text-white font-semibold">{c.name}</div>
-                    <div className="text-sm text-muted-foreground">
-                      {c.bonusText || c.welcomeBonus || "Exclusive bonuses available"}
+                      <div className="text-sm text-muted-foreground">
+                        {c.bonusText || c.welcomeBonus || "Exclusive bonuses available"}
+                      </div>
                     </div>
                   </div>
+
                   {c.affiliateLink ? (
                     <Button asChild size="sm">
                       <a href={c.affiliateLink} target="_blank" rel="noreferrer">
