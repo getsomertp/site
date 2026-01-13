@@ -107,6 +107,8 @@ export interface IStorage {
   
   // Stream Event Entries
   getStreamEventEntries(eventId: number): Promise<StreamEventEntry[]>;
+  getStreamEventEntryCount(eventId: number): Promise<number>;
+  getStreamEventEntryForUser(eventId: number, userId: string): Promise<StreamEventEntry | undefined>;
   getStreamEventEntry(id: number): Promise<StreamEventEntry | undefined>;
   createStreamEventEntry(entry: InsertStreamEventEntry): Promise<StreamEventEntry>;
   updateStreamEventEntry(id: number, data: Partial<InsertStreamEventEntry>): Promise<StreamEventEntry | undefined>;
@@ -489,6 +491,23 @@ export class DatabaseStorage implements IStorage {
   // Stream Event Entries
   async getStreamEventEntries(eventId: number): Promise<StreamEventEntry[]> {
     return db.select().from(streamEventEntries).where(eq(streamEventEntries.eventId, eventId)).orderBy(asc(streamEventEntries.createdAt));
+  }
+
+  async getStreamEventEntryCount(eventId: number): Promise<number> {
+    const [row] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(streamEventEntries)
+      .where(eq(streamEventEntries.eventId, eventId));
+    return Number(row?.count || 0);
+  }
+
+  async getStreamEventEntryForUser(eventId: number, userId: string): Promise<StreamEventEntry | undefined> {
+    const [row] = await db
+      .select()
+      .from(streamEventEntries)
+      .where(and(eq(streamEventEntries.eventId, eventId), eq(streamEventEntries.userId, userId)))
+      .limit(1);
+    return row || undefined;
   }
 
   async getStreamEventEntry(id: number): Promise<StreamEventEntry | undefined> {

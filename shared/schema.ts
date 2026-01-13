@@ -243,6 +243,9 @@ export const streamEvents = pgTable("stream_events", {
 export const streamEventEntries = pgTable("stream_event_entries", {
   id: serial("id").primaryKey(),
   eventId: integer("event_id").notNull().references(() => streamEvents.id, { onDelete: "cascade" }),
+  // Optional linkage to a site user (Discord auth). When present, we can enforce
+  // one entry per user per event.
+  userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
   displayName: text("display_name").notNull(),
   slotChoice: text("slot_choice").notNull(),
   category: text("category"),

@@ -21,7 +21,8 @@ import multer from "multer";
 import path from "path";
 import fs from "fs";
 
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { S3Client, PutObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const uploadsDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -32,25 +33,48 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
 });
 
+function normalizeBool(v: unknown, fallback: boolean): boolean {
+  if (v === undefined || v === null) return fallback;
+  const s = String(v).trim().toLowerCase();
+  if (["1", "true", "yes", "y", "on"].includes(s)) return true;
+  if (["0", "false", "no", "n", "off"].includes(s)) return false;
+  return fallback;
+}
+
+function isRailwayObjectStorage(): boolean {
+  const endpoint = String(process.env.S3_ENDPOINT || "");
+  const publicBase = String(process.env.S3_PUBLIC_BASE_URL || "");
+  return endpoint.includes("storage.railway.app") || publicBase.includes("storage.railway.app");
+}
+
+function shouldProxyPublicObjects(): boolean {
+  // Railway's object storage is typically private; proxying via presigned URLs is the safest default.
+  return normalizeBool(process.env.S3_USE_PROXY, isRailwayObjectStorage());
+}
+
 function getPublicUrl(key: string) {
+  if (shouldProxyPublicObjects()) return `/api/public/files/${encodeURIComponent(key)}`;
   const base = process.env.S3_PUBLIC_BASE_URL;
   if (base) return `${base.replace(/\/$/, "")}/${key}`;
-  // If no public base is configured, we can't reliably construct a public URL for R2/S3.
   return null;
 }
 
 function s3Client() {
-  const endpoint = process.env.S3_ENDPOINT;
+  const endpoint = process.env.S3_ENDPOINT || (isRailwayObjectStorage() ? "https://storage.railway.app" : undefined);
   const region = process.env.S3_REGION || "auto";
   const accessKeyId = process.env.S3_ACCESS_KEY_ID;
   const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
   if (!endpoint || !accessKeyId || !secretAccessKey) return null;
 
+  // R2 prefers path-style; Railway prefers virtual-hosted-style.
+  const defaultForcePath = !String(endpoint).includes("storage.railway.app");
+  const forcePathStyle = normalizeBool(process.env.S3_FORCE_PATH_STYLE, defaultForcePath);
+
   return new S3Client({
     region,
     endpoint,
     credentials: { accessKeyId, secretAccessKey },
-    forcePathStyle: true, // works well with R2
+    forcePathStyle,
   });
 }
 
@@ -141,6 +165,35 @@ export async function registerRoutes(
 // Serve locally stored uploads (used when S3/R2 not configured)
 app.use("/uploads", express.static(uploadsDir));
 
+// Public file proxy for S3/R2/Railway object storage.
+// We intentionally only allow a small set of public prefixes.
+app.get("/api/public/files/:key(*)", async (req: Request, res: Response) => {
+  try {
+    const rawKey = String((req.params as any).key || "");
+    const key = decodeURIComponent(rawKey).replace(/\\/g, "/");
+    if (!key || key.includes("..")) return res.status(400).json({ error: "Bad key" });
+
+    // Public assets only (casino logos). Everything else should use an auth-gated route.
+    if (!key.startsWith("casinos/")) {
+      return res.status(404).json({ error: "Not found" });
+    }
+
+    const bucket = process.env.S3_BUCKET;
+    const client = s3Client();
+    if (!bucket || !client) return res.status(404).json({ error: "File not available" });
+
+    const signed = await getSignedUrl(
+      client,
+      new GetObjectCommand({ Bucket: bucket, Key: key }),
+      { expiresIn: 60 },
+    );
+
+    return res.redirect(signed);
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || "Failed to fetch file" });
+  }
+});
+
 // Admin: upload casino logo (S3/R2 if configured, else local)
 app.post("/api/admin/uploads/casino-logo", adminAuth, upload.single("logo"), async (req: Request, res: Response) => {
   try {
@@ -165,7 +218,7 @@ app.post("/api/admin/uploads/casino-logo", adminAuth, upload.single("logo"), asy
 
       const publicUrl = getPublicUrl(key);
       if (!publicUrl) {
-        return res.status(500).json({ error: "Uploaded to S3, but S3_PUBLIC_BASE_URL is not set (required to form a public URL)." });
+        return res.status(500).json({ error: "Uploaded, but no public URL can be formed. Set S3_PUBLIC_BASE_URL or enable S3_USE_PROXY." });
       }
       return res.json({ url: publicUrl, key });
     }
@@ -897,15 +950,82 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   
   // Get all stream events (optionally filter by type)
   
-// Public stream games (read-only)
+// Public stream games (read-only list, enriched with entry counts + user's entry status)
 app.get("/api/stream-events", async (req, res) => {
   try {
     const type = typeof req.query.type === "string" ? req.query.type : undefined;
     const events = await storage.getStreamEvents(type);
-    const publicEvents = (events || []).filter(e => e.status !== "draft");
-    res.json(publicEvents);
+    const userId = req.session?.userId;
+
+    const publicEvents = (events || []).filter((e: any) => e.status !== "draft" && e.isPublic !== false);
+
+    const enriched = await Promise.all(
+      publicEvents.map(async (e: any) => {
+        const entriesCount = await storage.getStreamEventEntryCount(e.id);
+        const hasEntered = userId ? Boolean(await storage.getStreamEventEntryForUser(e.id, userId)) : false;
+        const isGuess = String(e.type || "").toLowerCase().includes("guess");
+        const isOpen = e.status === "open";
+        const isFull = typeof e.maxPlayers === "number" && e.maxPlayers > 0 && entriesCount >= e.maxPlayers;
+        const canEnter = Boolean(userId) && isOpen && !isGuess && !hasEntered && !isFull;
+        return { ...e, entriesCount, hasEntered, canEnter };
+      }),
+    );
+
+    res.json(enriched);
   } catch (err: any) {
     res.status(500).json({ error: err?.message || "Failed to fetch stream events" });
+  }
+});
+
+// User entry endpoint (Discord auth required)
+app.post("/api/stream-events/:id/entries", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const eventId = parseInt(req.params.id);
+    const event = await storage.getStreamEvent(eventId);
+    if (!event || event.status === "draft" || (event as any).isPublic === false) {
+      return res.status(404).json({ error: "Stream event not found" });
+    }
+
+    const type = String((event as any).type || "").toLowerCase();
+    const isGuess = type.includes("guess");
+    if (isGuess) {
+      return res.status(501).json({ error: "Guess balance entries are coming soon" });
+    }
+
+    if ((event as any).status !== "open") {
+      return res.status(400).json({ error: "Event is not open for entries" });
+    }
+
+    const userId = req.session!.userId!;
+    const existing = await storage.getStreamEventEntryForUser(eventId, userId);
+    if (existing) {
+      return res.status(409).json({ error: "You already entered this event" });
+    }
+
+    const entriesCount = await storage.getStreamEventEntryCount(eventId);
+    const maxPlayers = (event as any).maxPlayers;
+    if (typeof maxPlayers === "number" && maxPlayers > 0 && entriesCount >= maxPlayers) {
+      return res.status(400).json({ error: "Event is full" });
+    }
+
+    const user = await storage.getUser(userId);
+    const displayName = (user?.discordUsername || user?.kickUsername || "Player").toString();
+    const slotChoice = String(req.body?.slotChoice || "").trim();
+    if (!slotChoice) {
+      return res.status(400).json({ error: "Slot is required" });
+    }
+
+    const entry = await storage.createStreamEventEntry({
+      eventId,
+      userId,
+      displayName,
+      slotChoice,
+      status: "pending",
+    } as any);
+
+    res.status(201).json(entry);
+  } catch (error) {
+    res.status(500).json({ error: getErrorMessage(error, "Failed to enter event") });
   }
 });
 
