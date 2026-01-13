@@ -13,10 +13,19 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Navigation } from "@/components/Navigation";
 import type { Casino, Giveaway, GiveawayRequirement } from "@shared/schema";
 
+type WinnerSummary = {
+  id: string;
+  discordUsername?: string | null;
+  discordAvatar?: string | null;
+  kickUsername?: string | null;
+  kickVerified?: boolean | null;
+};
+
 type GiveawayWithDetails = Giveaway & {
   entries: number;
   requirements: GiveawayRequirement[];
   hasEntered?: boolean;
+  winner?: WinnerSummary | null;
 };
 
 function parseRequireVerified(value: unknown): boolean {
@@ -189,7 +198,8 @@ export default function Giveaways() {
     .filter((g) => g.winnerId)
     .slice(0, 4)
     .map((g) => ({
-      username: "Winner",
+      username: g.winner?.discordUsername || g.winner?.kickUsername || "Winner selected",
+      avatar: g.winner?.discordAvatar || null,
       prize: g.prize,
       giveaway: g.title,
       date: new Date(g.endsAt).toLocaleDateString(),
@@ -269,6 +279,7 @@ export default function Giveaways() {
                 const req = evaluateRequirements(giveaway.requirements || []);
                 const requirementMet = req.met;
                 const alreadyEntered = Boolean((giveaway as any).hasEntered);
+                const winnerName = giveaway.winner?.discordUsername || giveaway.winner?.kickUsername || "Winner selected";
 
                 const primaryCta = () => {
                   if (alreadyEntered && isActive) return { label: "Already Entered", disabled: true, onClick: undefined as any };
@@ -350,7 +361,7 @@ export default function Giveaways() {
                             <p className="text-xs text-muted-foreground mb-1">Winner</p>
                             <p className="font-display font-bold text-neon-gold flex items-center gap-2">
                               <Sparkles className="w-4 h-4" />
-                              Winner Selected
+                              {winnerName}
                             </p>
                           </div>
                         )}
@@ -429,6 +440,15 @@ export default function Giveaways() {
                               </div>
                             </div>
 
+                            {!isActive && giveaway.winnerId && (
+                              <div className="p-4 bg-neon-gold/10 rounded-lg border border-neon-gold/20">
+                                <p className="text-sm text-neon-gold flex items-center gap-2">
+                                  <Sparkles className="w-4 h-4" />
+                                  Winner: {winnerName}
+                                </p>
+                              </div>
+                            )}
+
                             {alreadyEntered && isActive && (
                               <div className="p-4 bg-green-500/10 rounded-lg border border-green-500/30">
                                 <p className="text-sm text-green-400 flex items-center gap-2">
@@ -490,7 +510,16 @@ export default function Giveaways() {
                     transition={{ delay: i * 0.1 }}
                     className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 border-b border-white/5 last:border-0"
                   >
-                    <div className="text-white font-display font-bold">{winner.username}</div>
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white">
+                        {winner.avatar ? (
+                          <img src={winner.avatar} alt="" className="w-full h-full object-cover" />
+                        ) : (
+                          <span>🏆</span>
+                        )}
+                      </div>
+                      <div className="text-white font-display font-bold">{winner.username}</div>
+                    </div>
                     <div className="text-neon-gold font-bold">{winner.prize}</div>
                     <div className="text-muted-foreground">{winner.giveaway}</div>
                     <div className="text-muted-foreground md:text-right">{winner.date}</div>

@@ -765,11 +765,36 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
     return requirements;
   };
 
+
+
+  const toWinnerSummary = (u: any) => {
+    if (!u) return null;
+    return {
+      id: u.id,
+      discordUsername: u.discordUsername,
+      discordAvatar: u.discordAvatar,
+      kickUsername: u.kickUsername,
+      kickVerified: u.kickVerified,
+    };
+  };
+
+  const isGiveawayActiveNow = (g: any) => {
+    try {
+      return Boolean(g?.isActive) && new Date(g.endsAt) > new Date();
+    } catch {
+      return false;
+    }
+  };
   // Get all giveaways
   app.get("/api/giveaways", async (req: Request, res: Response) => {
     try {
       const giveaways = await storage.getGiveaways();
       const userId = (req.session as any)?.userId as string | undefined;
+
+      const winnerIds = giveaways.map((g: any) => g?.winnerId).filter(Boolean) as string[];
+      const winnerUsers = winnerIds.length ? await storage.getUsersByIds(winnerIds) : [];
+      const winnerMap = new Map(winnerUsers.map((u: any) => [u.id, u]));
+
       const enteredSet = userId ? new Set(await storage.getUserEnteredGiveawayIds(userId)) : null;
 
       const giveawaysWithDetails = await Promise.all(
@@ -778,8 +803,10 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
           entries: await storage.getGiveawayEntryCount(g.id),
           requirements: withImplicitGiveawayRequirements(g, await storage.getGiveawayRequirements(g.id)),
           hasEntered: enteredSet ? enteredSet.has(g.id) : false,
+          winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
         }))
       );
+
       res.json(giveawaysWithDetails);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch giveaways" });
@@ -791,6 +818,11 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
     try {
       const giveaways = await storage.getActiveGiveaways();
       const userId = (req.session as any)?.userId as string | undefined;
+
+      const winnerIds = giveaways.map((g: any) => g?.winnerId).filter(Boolean) as string[];
+      const winnerUsers = winnerIds.length ? await storage.getUsersByIds(winnerIds) : [];
+      const winnerMap = new Map(winnerUsers.map((u: any) => [u.id, u]));
+
       const enteredSet = userId ? new Set(await storage.getUserEnteredGiveawayIds(userId)) : null;
 
       const giveawaysWithDetails = await Promise.all(
@@ -799,8 +831,10 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
           entries: await storage.getGiveawayEntryCount(g.id),
           requirements: withImplicitGiveawayRequirements(g, await storage.getGiveawayRequirements(g.id)),
           hasEntered: enteredSet ? enteredSet.has(g.id) : false,
+          winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
         }))
       );
+
       res.json(giveawaysWithDetails);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch active giveaways" });
@@ -815,13 +849,120 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
       if (!giveaway) {
         return res.status(404).json({ error: "Giveaway not found" });
       }
+
       const entries = await storage.getGiveawayEntryCount(id);
       const requirements = withImplicitGiveawayRequirements(giveaway, await storage.getGiveawayRequirements(id));
       const userId = (req.session as any)?.userId as string | undefined;
       const hasEntered = userId ? await storage.hasUserEntered(id, userId) : false;
-      res.json({ ...giveaway, entries, requirements, hasEntered });
+
+      const winnerUser = giveaway.winnerId ? await storage.getUser(String(giveaway.winnerId)) : undefined;
+      res.json({ ...giveaway, entries, requirements, hasEntered, winner: giveaway.winnerId ? toWinnerSummary(winnerUser) : null });
     } catch (error) {
       res.status(500).json({ error: getErrorMessage(error, "Failed to fetch giveaway") });
+    }
+  });
+
+  // Admin: get all giveaways (current + old) with entry counts, requirements, and winner info
+  app.get("/api/admin/giveaways", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const status = String((req.query as any)?.status || "all").toLowerCase(); // all|active|ended
+      const all = await storage.getGiveaways();
+      const now = new Date();
+      const filtered = all.filter((g: any) => {
+        const active = Boolean(g?.isActive) && new Date(g.endsAt) > now;
+        if (status === "active") return active;
+        if (status === "ended") return !active;
+        return true;
+      });
+
+      const winnerIds = filtered.map((g: any) => g?.winnerId).filter(Boolean) as string[];
+      const winnerUsers = winnerIds.length ? await storage.getUsersByIds(winnerIds) : [];
+      const winnerMap = new Map(winnerUsers.map((u: any) => [u.id, u]));
+
+      const out = await Promise.all(
+        filtered.map(async (g: any) => ({
+          ...g,
+          entries: await storage.getGiveawayEntryCount(g.id),
+          requirements: withImplicitGiveawayRequirements(g, await storage.getGiveawayRequirements(g.id)),
+          winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
+        }))
+      );
+
+      res.json(out);
+    } catch (error) {
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch giveaways") });
+    }
+  });
+
+  // Admin: giveaway entry log (who entered + when)
+  app.get("/api/admin/giveaways/:id/entries", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const giveawayId = parseInt(req.params.id);
+      if (!Number.isFinite(giveawayId)) return res.status(400).json({ error: "Invalid id" });
+
+      const giveaway = await storage.getGiveaway(giveawayId);
+      if (!giveaway) return res.status(404).json({ error: "Giveaway not found" });
+
+      const rows = await storage.getGiveawayEntriesWithUsers(giveawayId);
+      const entries = rows.map((e: any) => ({
+        id: e.id,
+        giveawayId: e.giveawayId,
+        userId: e.userId,
+        createdAt: e.createdAt,
+        user: toWinnerSummary(e.user),
+      }));
+
+      res.json(entries);
+    } catch (error) {
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch giveaway entries") });
+    }
+  });
+
+  // Admin: pick and lock a winner (random) for an ended giveaway
+  app.post("/api/admin/giveaways/:id/pick-winner", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const giveawayId = parseInt(req.params.id);
+      if (!Number.isFinite(giveawayId)) return res.status(400).json({ error: "Invalid id" });
+
+      const giveaway = await storage.getGiveaway(giveawayId);
+      if (!giveaway) return res.status(404).json({ error: "Giveaway not found" });
+
+      const force = Boolean((req.body as any)?.force) || String((req.query as any)?.force || "") === "1";
+
+      const active = isGiveawayActiveNow(giveaway);
+      if (active) {
+        return res.status(400).json({ error: "Giveaway is still active" });
+      }
+
+      if (giveaway.winnerId && !force) {
+        const winnerUser = await storage.getUser(String(giveaway.winnerId));
+        return res.json({
+          giveaway: { ...giveaway, winner: giveaway.winnerId ? toWinnerSummary(winnerUser) : null },
+          winnerId: giveaway.winnerId,
+          winner: giveaway.winnerId ? toWinnerSummary(winnerUser) : null,
+          alreadyPicked: true,
+        });
+      }
+
+      const entries = await storage.getGiveawayEntries(giveawayId);
+      if (!entries.length) {
+        return res.status(400).json({ error: "No entries to pick from" });
+      }
+
+      const winnerEntry = entries[crypto.randomInt(0, entries.length)];
+      const winnerId = winnerEntry.userId;
+
+      const updated = await storage.updateGiveaway(giveawayId, { winnerId, isActive: false });
+      const winnerUser = await storage.getUser(String(winnerId));
+
+      return res.json({
+        giveaway: updated ? { ...updated, winner: toWinnerSummary(winnerUser) } : { ...giveaway, winnerId, winner: toWinnerSummary(winnerUser) },
+        winnerId,
+        winner: toWinnerSummary(winnerUser),
+        alreadyPicked: false,
+      });
+    } catch (error) {
+      res.status(500).json({ error: getErrorMessage(error, "Failed to pick winner") });
     }
   });
 

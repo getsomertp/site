@@ -18,7 +18,7 @@ import {
   type LeaderboardEntry, type InsertLeaderboardEntry
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, asc, sql, ilike, or } from "drizzle-orm";
+import { eq, and, desc, asc, sql, ilike, or, inArray } from "drizzle-orm";
 
 // Keep outbound casino links safe and consistently absolute.
 // Some older rows may have stored schemeless URLs like "acebet.com/...".
@@ -44,6 +44,7 @@ function normalizeCasino(c: Casino): Casino {
 export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
+  getUsersByIds(ids: string[]): Promise<User[]>;
   getUserByDiscordId(discordId: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, data: Partial<InsertUser>): Promise<User | undefined>;
@@ -97,6 +98,7 @@ export interface IStorage {
   
   // Giveaway Entries
   getGiveawayEntries(giveawayId: number): Promise<GiveawayEntry[]>;
+  getGiveawayEntriesWithUsers(giveawayId: number): Promise<(GiveawayEntry & { user: User })[]>;
   getGiveawayEntryCount(giveawayId: number): Promise<number>;
   hasUserEntered(giveawayId: number, userId: string): Promise<boolean>;
   getUserEnteredGiveawayIds(userId: string): Promise<number[]>;
@@ -150,6 +152,12 @@ export class DatabaseStorage implements IStorage {
   async getUser(id: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.id, id));
     return user || undefined;
+  }
+
+  async getUsersByIds(ids: string[]): Promise<User[]> {
+    const uniq = Array.from(new Set((ids || []).filter(Boolean).map(String)));
+    if (uniq.length === 0) return [];
+    return db.select().from(users).where(inArray(users.id, uniq));
   }
 
   async getUserByDiscordId(discordId: string): Promise<User | undefined> {
@@ -404,6 +412,20 @@ export class DatabaseStorage implements IStorage {
   // Giveaway Entries
   async getGiveawayEntries(giveawayId: number): Promise<GiveawayEntry[]> {
     return db.select().from(giveawayEntries).where(eq(giveawayEntries.giveawayId, giveawayId));
+  }
+
+  async getGiveawayEntriesWithUsers(giveawayId: number): Promise<(GiveawayEntry & { user: User })[]> {
+    const rows = await db
+      .select({
+        entry: giveawayEntries,
+        user: users,
+      })
+      .from(giveawayEntries)
+      .innerJoin(users, eq(giveawayEntries.userId, users.id))
+      .where(eq(giveawayEntries.giveawayId, giveawayId))
+      .orderBy(desc(giveawayEntries.createdAt));
+
+    return rows.map((r) => ({ ...r.entry, user: r.user }));
   }
 
   async getGiveawayEntryCount(giveawayId: number): Promise<number> {

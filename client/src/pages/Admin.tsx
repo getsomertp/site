@@ -155,6 +155,29 @@ const defaultGiveawayForm: GiveawayFormData = {
   isActive: true,
 };
 
+type WinnerSummary = {
+  id: string;
+  discordUsername?: string | null;
+  discordAvatar?: string | null;
+  kickUsername?: string | null;
+  kickVerified?: boolean | null;
+};
+
+type GiveawayAdmin = Giveaway & {
+  entries: number;
+  requirements: GiveawayRequirement[];
+  winner?: WinnerSummary | null;
+};
+
+type GiveawayEntryAdmin = {
+  id: number;
+  giveawayId: number;
+  userId: string;
+  createdAt: string | Date | null;
+  user: WinnerSummary | null;
+};
+
+
 function AdminLogin({ onLogin }: { onLogin: () => void }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -244,6 +267,9 @@ export default function Admin() {
   const [editingGiveaway, setEditingGiveaway] = useState<Giveaway | null>(null);
   const [casinoForm, setCasinoForm] = useState<CasinoFormData>(defaultCasinoForm);
   const [giveawayForm, setGiveawayForm] = useState<GiveawayFormData>(defaultGiveawayForm);
+  const [giveawayListMode, setGiveawayListMode] = useState<"all" | "active" | "ended">("all");
+  const [entriesDialogOpen, setEntriesDialogOpen] = useState(false);
+  const [selectedGiveawayForEntries, setSelectedGiveawayForEntries] = useState<GiveawayAdmin | null>(null);
 
   // Site settings
   const [siteKickUrl, setSiteKickUrl] = useState("https://kick.com/get-some");
@@ -303,13 +329,18 @@ export default function Admin() {
   });
 
   // Fetch giveaways  
-  const { data: giveaways = [], isLoading: loadingGiveaways } = useQuery<(Giveaway & { entries: number; requirements: GiveawayRequirement[] })[]>({
-    queryKey: ["/api/giveaways"],
-    // IMPORTANT: react-query requires a queryFn. Without it, the Admin page can throw at runtime
-    // and appear to have "no admin features" even though authentication worked.
+  const { data: giveaways = [], isLoading: loadingGiveaways } = useQuery<GiveawayAdmin[]>({
+    queryKey: ["/api/admin/giveaways"],
     queryFn: () => adminFetch("/api/admin/giveaways"),
     enabled: isAuthenticated === true,
   });
+
+  const { data: giveawayEntries = [], isLoading: loadingGiveawayEntries } = useQuery<GiveawayEntryAdmin[]>({
+    queryKey: [selectedGiveawayForEntries ? `/api/admin/giveaways/${selectedGiveawayForEntries.id}/entries` : "/api/admin/giveaways/0/entries"],
+    queryFn: () => adminFetch(`/api/admin/giveaways/${selectedGiveawayForEntries!.id}/entries`),
+    enabled: isAuthenticated === true && entriesDialogOpen && !!selectedGiveawayForEntries?.id,
+  });
+
 
   // Casino mutations
   const createCasino = useMutation({
@@ -495,6 +526,7 @@ const deleteLeaderboard = useMutation({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/giveaways"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/giveaways"] });
       setGiveawayDialogOpen(false);
       setGiveawayForm(defaultGiveawayForm);
       toast({ title: "Giveaway created successfully" });
@@ -518,6 +550,7 @@ const deleteLeaderboard = useMutation({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/giveaways"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/giveaways"] });
       setGiveawayDialogOpen(false);
       setEditingGiveaway(null);
       setGiveawayForm(defaultGiveawayForm);
@@ -534,12 +567,35 @@ const deleteLeaderboard = useMutation({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/giveaways"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/giveaways"] });
       toast({ title: "Giveaway deleted successfully" });
     },
     onError: (err: any) => {
       toast({ title: "Failed to delete giveaway", description: err?.message || "Request failed", variant: "destructive" });
     },
   });
+
+  const pickGiveawayWinner = useMutation({
+    mutationFn: async (giveawayId: number) => {
+      return adminFetch(`/api/admin/giveaways/${giveawayId}/pick-winner`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/giveaways"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/giveaways"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/giveaways/active"] });
+      if (selectedGiveawayForEntries?.id) {
+        queryClient.invalidateQueries({ queryKey: [`/api/admin/giveaways/${selectedGiveawayForEntries.id}/entries`] });
+      }
+      toast({ title: "Winner selected" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to pick winner", description: err?.message || "Request failed", variant: "destructive" });
+    },
+  });
+
   
   const handleLogout = async () => {
     await fetch("/api/admin/logout", { method: "POST", credentials: "include" });
@@ -598,6 +654,16 @@ const deleteLeaderboard = useMutation({
     });
     setGiveawayDialogOpen(true);
   };
+
+  const adminGiveawaysFiltered = (() => {
+    const now = new Date();
+    return (giveaways || []).filter((g: any) => {
+      const active = Boolean(g?.isActive) && new Date(g.endsAt) > now;
+      if (giveawayListMode === "active") return active;
+      if (giveawayListMode === "ended") return !active;
+      return true;
+    });
+  })();
 
   return (
     <div className="min-h-screen">
@@ -1171,9 +1237,36 @@ const deleteLeaderboard = useMutation({
                 </Dialog>
               </div>
 
+              <div className="flex items-center gap-2 mb-6">
+                <Button
+                  variant={giveawayListMode === "all" ? "secondary" : "outline"}
+                  size="sm"
+                  onClick={() => setGiveawayListMode("all")}
+                  data-testid="filter-giveaways-all"
+                >
+                  All
+                </Button>
+                <Button
+                  variant={giveawayListMode === "active" ? "secondary" : "outline"}
+                  size="sm"
+                  onClick={() => setGiveawayListMode("active")}
+                  data-testid="filter-giveaways-active"
+                >
+                  Current
+                </Button>
+                <Button
+                  variant={giveawayListMode === "ended" ? "secondary" : "outline"}
+                  size="sm"
+                  onClick={() => setGiveawayListMode("ended")}
+                  data-testid="filter-giveaways-ended"
+                >
+                  Previous
+                </Button>
+              </div>
+
               {loadingGiveaways ? (
                 <div className="text-center py-12 text-muted-foreground">Loading giveaways...</div>
-              ) : giveaways.length === 0 ? (
+              ) : (giveaways || []).length === 0 ? (
                 <Card className="glass p-12 text-center">
                   <Gift className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
                   <h3 className="font-display text-xl text-white mb-2">No Giveaways Yet</h3>
@@ -1182,10 +1275,19 @@ const deleteLeaderboard = useMutation({
                     <Plus className="w-4 h-4 mr-2" /> Create Giveaway
                   </Button>
                 </Card>
+              ) : adminGiveawaysFiltered.length === 0 ? (
+                <Card className="glass p-12 text-center">
+                  <Gift className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="font-display text-xl text-white mb-2">
+                    No {giveawayListMode === "active" ? "Current" : giveawayListMode === "ended" ? "Previous" : ""} Giveaways
+                  </h3>
+                  <p className="text-muted-foreground">Try a different filter.</p>
+                </Card>
               ) : (
                 <div className="space-y-4">
-                  {giveaways.map((giveaway) => {
+                  {adminGiveawaysFiltered.map((giveaway) => {
                     const isActive = giveaway.isActive && new Date(giveaway.endsAt) > new Date();
+                    const winnerName = giveaway.winner?.discordUsername || giveaway.winner?.kickUsername || "Winner selected";
                     return (
                       <Card key={giveaway.id} className="glass p-6" data-testid={`admin-giveaway-${giveaway.id}`}>
                         <div className="flex items-center gap-4">
@@ -1201,23 +1303,55 @@ const deleteLeaderboard = useMutation({
                                 {isActive ? "Active" : "Ended"}
                               </Badge>
                             </div>
-                            <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
+                            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground mt-1">
                               <span className="text-neon-gold font-display font-bold">{giveaway.prize}</span>
                               <span>{giveaway.entries || 0} entries</span>
                               <span>Ends: {new Date(giveaway.endsAt).toLocaleDateString()}</span>
+                              {giveaway.winnerId && (
+                                <span className="flex items-center gap-1 text-neon-gold">
+                                  <Trophy className="w-4 h-4" />
+                                  {winnerName}
+                                </span>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Button 
-                              variant="outline" 
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedGiveawayForEntries(giveaway);
+                                setEntriesDialogOpen(true);
+                              }}
+                              title="View entries"
+                              data-testid={`button-entries-giveaway-${giveaway.id}`}
+                            >
+                              <Users className="w-4 h-4" />
+                            </Button>
+
+                            {!isActive && !giveaway.winnerId && (giveaway.entries || 0) > 0 && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => pickGiveawayWinner.mutate(giveaway.id)}
+                                disabled={pickGiveawayWinner.isPending}
+                                title="Pick winner"
+                                data-testid={`button-pick-winner-${giveaway.id}`}
+                              >
+                                <Trophy className="w-4 h-4" />
+                              </Button>
+                            )}
+
+                            <Button
+                              variant="outline"
                               size="sm"
                               onClick={() => openEditGiveaway(giveaway)}
                               data-testid={`button-edit-giveaway-${giveaway.id}`}
                             >
                               <Edit className="w-4 h-4" />
                             </Button>
-                            <Button 
-                              variant="destructive" 
+                            <Button
+                              variant="destructive"
                               size="sm"
                               onClick={() => {
                                 if (confirm(`Delete "${giveaway.title}"?`)) {
@@ -1235,6 +1369,108 @@ const deleteLeaderboard = useMutation({
                   })}
                 </div>
               )}
+
+              <Dialog
+                open={entriesDialogOpen}
+                onOpenChange={(open) => {
+                  setEntriesDialogOpen(open);
+                  if (!open) setSelectedGiveawayForEntries(null);
+                }}
+              >
+                <DialogContent className="glass border-white/10 max-w-2xl">
+                  <DialogHeader>
+                    <DialogTitle className="font-display text-xl text-white">
+                      Entries — {selectedGiveawayForEntries?.title || ""}
+                    </DialogTitle>
+                  </DialogHeader>
+
+                  {selectedGiveawayForEntries && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between gap-4">
+                        <p className="text-sm text-muted-foreground">
+                          {(selectedGiveawayForEntries.entries || 0).toLocaleString()} entries
+                        </p>
+
+                        {(() => {
+                          const ended = !(selectedGiveawayForEntries.isActive && new Date(selectedGiveawayForEntries.endsAt) > new Date());
+                          const canPick = ended && !selectedGiveawayForEntries.winnerId && (selectedGiveawayForEntries.entries || 0) > 0;
+                          if (!canPick) return null;
+                          return (
+                            <Button
+                              size="sm"
+                              onClick={() => pickGiveawayWinner.mutate(selectedGiveawayForEntries.id)}
+                              disabled={pickGiveawayWinner.isPending}
+                              className="font-display"
+                              data-testid="button-pick-winner-modal"
+                            >
+                              <Trophy className="w-4 h-4 mr-2" />
+                              Pick Winner
+                            </Button>
+                          );
+                        })()}
+                      </div>
+
+                      {selectedGiveawayForEntries.winnerId && (
+                        <Card className="glass p-4">
+                          <div className="flex items-center gap-3">
+                            <Trophy className="w-5 h-5 text-neon-gold" />
+                            <div>
+                              <p className="text-xs text-muted-foreground">Winner</p>
+                              <p className="text-white font-display font-bold">
+                                {selectedGiveawayForEntries.winner?.discordUsername ||
+                                  selectedGiveawayForEntries.winner?.kickUsername ||
+                                  "Winner selected"}
+                              </p>
+                            </div>
+                          </div>
+                        </Card>
+                      )}
+
+                      <Card className="glass p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <p className="text-sm font-display text-white">Entry Log</p>
+                          <p className="text-xs text-muted-foreground">Newest first</p>
+                        </div>
+
+                        {loadingGiveawayEntries ? (
+                          <div className="text-center py-6 text-muted-foreground">Loading entries...</div>
+                        ) : giveawayEntries.length === 0 ? (
+                          <div className="text-center py-6 text-muted-foreground">No entries yet.</div>
+                        ) : (
+                          <ScrollArea className="h-72 pr-4">
+                            <div className="space-y-2">
+                              {giveawayEntries.map((e) => (
+                                <div key={e.id} className="flex items-center justify-between gap-3 p-2 rounded-md bg-white/5">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <div className="w-8 h-8 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white">
+                                      {e.user?.discordAvatar ? (
+                                        <img src={e.user.discordAvatar} alt="" className="w-full h-full object-cover" />
+                                      ) : (
+                                        (e.user?.discordUsername || e.user?.kickUsername || "?")
+                                          .slice(0, 1)
+                                          .toUpperCase()
+                                      )}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-white text-sm truncate">
+                                        {e.user?.discordUsername || e.user?.kickUsername || e.userId}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground truncate">{e.userId}</p>
+                                    </div>
+                                  </div>
+                                  <div className="text-xs text-muted-foreground whitespace-nowrap">
+                                    {e.createdAt ? new Date(e.createdAt as any).toLocaleString() : ""}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </ScrollArea>
+                        )}
+                      </Card>
+                    </div>
+                  )}
+                </DialogContent>
+              </Dialog>
             </TabsContent>
 
             <PlayersTab casinos={casinos} />
