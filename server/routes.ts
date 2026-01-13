@@ -150,6 +150,14 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
   return res.status(401).json({ error: "Unauthorized - Login required" });
 }
 
+function requireAuthOrAdmin(req: Request, res: Response, next: NextFunction) {
+  // Admin sessions may not have a linked userId (admin password login),
+  // but should still be able to access admin-only resources.
+  if (req.session?.isAdmin) return next();
+  return requireAuth(req, res, next);
+}
+
+
 function requireSelfOrAdmin(req: Request, res: Response, next: NextFunction) {
   const targetUserId = req.params.id;
   const userId = getAuthedUserId(req);
@@ -244,7 +252,7 @@ app.get("/api/public/files/:key(*)", async (req: Request, res: Response) => {
 });
 
 // Private file proxy (wallet proofs, etc). Requires auth and ownership.
-app.get("/api/files/:key(*)", requireAuth, async (req: Request, res: Response) => {
+app.get("/api/files/:key(*)", requireAuthOrAdmin, async (req: Request, res: Response) => {
   try {
     const rawKey = String((req.params as any).key || "");
     const key = decodeURIComponent(rawKey).replace(/\\/g, "/");
