@@ -796,7 +796,19 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   // Create giveaway (admin only)
   app.post("/api/admin/giveaways", adminAuth, async (req: Request, res: Response) => {
     try {
-      const { requirements, ...giveawayData } = req.body;
+      const { requirements, ...giveawayDataRaw } = req.body;
+      const giveawayData: any = { ...giveawayDataRaw };
+
+      // The client sends timestamps as ISO strings. Coerce to Date for schema validation.
+      if (typeof giveawayData.endsAt === "string") giveawayData.endsAt = new Date(giveawayData.endsAt);
+      if (giveawayData.endsAt instanceof Date && Number.isNaN(giveawayData.endsAt.getTime())) {
+        return res.status(400).json({ error: [{ path: ["endsAt"], message: "Invalid date" }] });
+      }
+      if (typeof giveawayData.maxEntries === "string") {
+        const n = Number(giveawayData.maxEntries);
+        giveawayData.maxEntries = Number.isFinite(n) ? n : null;
+      }
+
       const data = insertGiveawaySchema.parse(giveawayData);
       const giveaway = await storage.createGiveaway(data);
       
@@ -818,7 +830,18 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   app.patch("/api/admin/giveaways/:id", adminAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
-      const { requirements, ...giveawayData } = req.body;
+      const { requirements, ...giveawayDataRaw } = req.body;
+      const giveawayData: any = { ...giveawayDataRaw };
+
+      if (typeof giveawayData.endsAt === "string") giveawayData.endsAt = new Date(giveawayData.endsAt);
+      if (giveawayData.endsAt instanceof Date && Number.isNaN(giveawayData.endsAt.getTime())) {
+        return res.status(400).json({ error: [{ path: ["endsAt"], message: "Invalid date" }] });
+      }
+      if (typeof giveawayData.maxEntries === "string") {
+        const n = Number(giveawayData.maxEntries);
+        giveawayData.maxEntries = Number.isFinite(n) ? n : null;
+      }
+
       const data = insertGiveawaySchema.partial().parse(giveawayData);
       const giveaway = await storage.updateGiveaway(id, data);
       if (!giveaway) {
@@ -966,7 +989,7 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   });
 
   // Update casino account
-  app.patch("/api/casino-accounts/:id", requireAuth, async (req: Request, res: Response) => {
+  app.patch("/api/casino-accounts/:id", requireAuthOrAdmin, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
@@ -1005,7 +1028,7 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   });
 
   // Delete casino account
-  app.delete("/api/casino-accounts/:id", requireAuth, async (req: Request, res: Response) => {
+  app.delete("/api/casino-accounts/:id", requireAuthOrAdmin, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
@@ -1040,7 +1063,7 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   });
 
   // Update wallet
-  app.patch("/api/wallets/:id", requireAuth, async (req: Request, res: Response) => {
+  app.patch("/api/wallets/:id", requireAuthOrAdmin, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
@@ -1077,7 +1100,7 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   });
 
   // Delete wallet
-  app.delete("/api/wallets/:id", requireAuth, async (req: Request, res: Response) => {
+  app.delete("/api/wallets/:id", requireAuthOrAdmin, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id, 10);
       if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });

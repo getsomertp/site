@@ -466,23 +466,30 @@ const deleteLeaderboard = useMutation({
   // Giveaway mutations
   const createGiveaway = useMutation({
     mutationFn: async (data: GiveawayFormData) => {
-      const { requirements, ...rest } = data;
+      // Client-side validation (prevents confusing "title: Required" / "endsAt" errors)
+      if (!data.title?.trim()) throw new Error("Title is required");
+      if (!data.prize?.trim()) throw new Error("Prize is required");
+      if (!data.endsAt?.trim()) throw new Error("Ends At is required");
+
+      const cleanRequirements = (data.requirements || [])
+        .filter((r) => r && r.type && r.type !== "none")
+        .map((r) => ({
+          type: r.type,
+          casinoId: r.casinoId ?? null,
+          value: r.value ? String(r.value) : null,
+        }));
+
       return adminFetch("/api/admin/giveaways", {
         method: "POST",
-        body: JSON.stringify({ 
-          ...(data.casinoId !== undefined ? { casinoId: data.casinoId } : {}),
-          ...(data.name !== undefined ? { name: data.name } : {}),
-          ...(data.periodType !== undefined ? { periodType: data.periodType } : {}),
-          ...(data.durationDays !== undefined ? { durationDays: data.durationDays } : {}),
-          ...(data.refreshIntervalSec !== undefined ? { refreshIntervalSec: data.refreshIntervalSec } : {}),
-          ...(data.startsAt !== undefined ? { startAt: new Date(data.startsAt) } : {}),
-          ...(data.endsAt !== undefined ? { endAt: new Date(data.endsAt) } : {}),
-          ...(data.apiUrl !== undefined ? { apiEndpoint: data.apiUrl } : {}),
-          ...(data.apiMethod !== undefined ? { apiMethod: data.apiMethod } : {}),
-          ...(data.apiHeadersJson !== undefined ? { apiHeadersJson: data.apiHeadersJson } : {}),
-          ...(data.apiBodyJson !== undefined ? { apiBodyJson: data.apiBodyJson } : {}),
-          ...(data.mappingJson !== undefined ? { apiMappingJson: data.mappingJson } : {}),
-          ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+        body: JSON.stringify({
+          title: data.title,
+          description: data.description || null,
+          prize: data.prize,
+          maxEntries: data.maxEntries ?? null,
+          casinoId: data.casinoId ?? null,
+          endsAt: new Date(data.endsAt),
+          isActive: data.isActive,
+          requirements: cleanRequirements,
         }),
       });
     },
@@ -1559,6 +1566,38 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
     },
   });
 
+  const verifyCasinoAccount = useMutation({
+    mutationFn: async (id: number) => {
+      return adminFetch(`/api/casino-accounts/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ verified: true }),
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Casino account verified" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users", selectedUserId] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to verify", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const verifyWallet = useMutation({
+    mutationFn: async (id: number) => {
+      return adminFetch(`/api/wallets/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ verified: true }),
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Wallet verified" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users", selectedUserId] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to verify", description: error.message, variant: "destructive" });
+    },
+  });
+
   const getCasinoName = (casinoId: number) => {
     return casinos.find(c => c.id === casinoId)?.name || "Unknown Casino";
   };
@@ -1686,9 +1725,22 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                                 ID: <span className="text-white font-mono">{account.odId}</span>
                               </div>
                             </div>
-                            <Badge className={account.verified ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400"}>
-                              {account.verified ? "Verified" : "Pending"}
-                            </Badge>
+                            <div className="flex items-center gap-2">
+                              {!account.verified && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => verifyCasinoAccount.mutate(account.id)}
+                                  disabled={verifyCasinoAccount.isPending}
+                                  data-testid={`button-verify-casino-account-${account.id}`}
+                                >
+                                  Verify
+                                </Button>
+                              )}
+                              <Badge className={account.verified ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400"}>
+                                {account.verified ? "Verified" : "Pending"}
+                              </Badge>
+                            </div>
                           </div>
                         </Card>
                       ))}
@@ -1723,6 +1775,17 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                                 >
                                   <Image className="w-5 h-5" />
                                 </a>
+                              )}
+                              {!wallet.verified && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => verifyWallet.mutate(wallet.id)}
+                                  disabled={verifyWallet.isPending}
+                                  data-testid={`button-verify-wallet-${wallet.id}`}
+                                >
+                                  Verify
+                                </Button>
                               )}
                               <Badge className={wallet.verified ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400"}>
                                 {wallet.verified ? "Verified" : "Pending"}
