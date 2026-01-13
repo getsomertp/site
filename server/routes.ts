@@ -27,6 +27,10 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 const uploadsDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
+// Private uploads (wallet proofs, etc). Never exposed via a public static route.
+const privateUploadsDir = path.join(process.cwd(), "uploads_private");
+if (!fs.existsSync(privateUploadsDir)) fs.mkdirSync(privateUploadsDir, { recursive: true });
+
 // Use memory storage so we can send to S3/R2
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -57,6 +61,23 @@ function getPublicUrl(key: string) {
   const base = process.env.S3_PUBLIC_BASE_URL;
   if (base) return `${base.replace(/\/$/, "")}/${key}`;
   return null;
+}
+
+function privateFileUrl(key: string) {
+  // Always served via auth-gated proxy route
+  return `/api/files/${encodeURIComponent(key)}`;
+}
+
+function privateLocalPathFromKey(key: string) {
+  const safeKey = String(key || "").replace(/\\/g, "/");
+  const localName = safeKey.replace(/\//g, "_");
+  return path.join(privateUploadsDir, localName);
+}
+
+function privateLocalPath(key: string) {
+  // Store nested keys as a flat filename to keep things simple on Railway.
+  const safe = key.replace(/\//g, "_");
+  return path.join(privateUploadsDir, safe);
 }
 
 function s3Client() {
@@ -167,6 +188,16 @@ function getErrorMessage(err: any, fallback: string) {
   return fallback;
 }
 
+function normalizeHttpUrl(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const s = String(value).trim();
+  if (!s) return undefined;
+  // allow local relative URLs like /uploads/... or /api/...
+  if (s.startsWith("/") || s.startsWith("data:")) return s;
+  if (/^https?:\/\//i.test(s)) return s;
+  return `https://${s.replace(/^\/\/+/, "")}`;
+}
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -211,6 +242,99 @@ app.get("/api/public/files/:key(*)", async (req: Request, res: Response) => {
     return res.status(500).json({ error: err?.message || "Failed to fetch file" });
   }
 });
+
+// Private file proxy (wallet proofs, etc). Requires auth and ownership.
+app.get("/api/files/:key(*)", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const rawKey = String((req.params as any).key || "");
+    const key = decodeURIComponent(rawKey).replace(/\\/g, "/");
+    if (!key || key.includes("..")) return res.status(400).json({ error: "Bad key" });
+
+    // Only private wallet proof assets for now
+    if (!key.startsWith("wallets/")) {
+      return res.status(404).json({ error: "Not found" });
+    }
+
+    // wallets/<userId>/<casinoId>/<filename>
+    const parts = key.split("/");
+    const ownerId = parts.length >= 2 ? parts[1] : "";
+    const requesterId = getAuthedUserId(req);
+    if (!ownerId) return res.status(404).json({ error: "Not found" });
+    if (!req.session?.isAdmin && (!requesterId || requesterId !== ownerId)) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    const bucket = process.env.S3_BUCKET;
+    const client = s3Client();
+    if (bucket && client) {
+      const signed = await getSignedUrl(
+        client,
+        new GetObjectCommand({ Bucket: bucket, Key: key }),
+        { expiresIn: 60 },
+      );
+      return res.redirect(signed);
+    }
+
+    // Local fallback (private directory)
+    const localPath = privateLocalPathFromKey(key);
+    if (!fs.existsSync(localPath)) return res.status(404).json({ error: "Not found" });
+    return res.sendFile(localPath);
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || "Failed to fetch file" });
+  }
+});
+
+// User: upload wallet proof screenshot (stored privately)
+app.post(
+  "/api/users/:id/uploads/wallet-proof",
+  requireAuth,
+  requireSelfOrAdmin,
+  upload.single("screenshot"),
+  async (req: Request, res: Response) => {
+    try {
+      const userId = req.params.id;
+      const casinoIdRaw = (req.body?.casinoId ?? req.query?.casinoId) as any;
+      const casinoId = Number(casinoIdRaw);
+      if (!Number.isFinite(casinoId) || casinoId <= 0) {
+        return res.status(400).json({ error: "casinoId is required" });
+      }
+
+      const file = (req as any).file as Express.Multer.File | undefined;
+      if (!file) return res.status(400).json({ error: "No file uploaded" });
+      if (!String(file.mimetype || "").startsWith("image/")) {
+        return res.status(400).json({ error: "Screenshot must be an image" });
+      }
+
+      const ext = (file.originalname.split(".").pop() || "png")
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "");
+
+      const key = `wallets/${userId}/${casinoId}/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
+
+      const bucket = process.env.S3_BUCKET;
+      const client = s3Client();
+
+      if (client && bucket) {
+        await client.send(
+          new PutObjectCommand({
+            Bucket: bucket,
+            Key: key,
+            Body: file.buffer,
+            ContentType: file.mimetype || "application/octet-stream",
+          }),
+        );
+        return res.json({ url: privateFileUrl(key), key });
+      }
+
+      const outPath = privateLocalPathFromKey(key);
+      fs.mkdirSync(path.dirname(outPath), { recursive: true });
+      fs.writeFileSync(outPath, file.buffer);
+      return res.json({ url: privateFileUrl(key), key });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "Failed to upload wallet proof" });
+    }
+  },
+);
 
 // Admin: upload casino logo (S3/R2 if configured, else local)
 app.post("/api/admin/uploads/casino-logo", adminAuth, upload.single("logo"), async (req: Request, res: Response) => {
@@ -442,7 +566,14 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   // Create casino (admin only)
   app.post("/api/admin/casinos", adminAuth, async (req: Request, res: Response) => {
     try {
-      const data = insertCasinoSchema.parse(req.body);
+      const parsed = insertCasinoSchema.parse(req.body);
+      const data = {
+        ...parsed,
+        affiliateLink: normalizeHttpUrl(parsed.affiliateLink) || parsed.affiliateLink,
+        leaderboardApiUrl: normalizeHttpUrl(parsed.leaderboardApiUrl) || parsed.leaderboardApiUrl,
+        // logo can be a public URL or an internal /uploads... path
+        logo: normalizeHttpUrl(parsed.logo) || parsed.logo,
+      };
       const casino = await storage.createCasino(data);
       res.status(201).json(casino);
     } catch (error) {
@@ -457,7 +588,13 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   app.patch("/api/admin/casinos/:id", adminAuth, async (req: Request, res: Response) => {
     try {
       const id = parseInt(req.params.id);
-      const data = insertCasinoSchema.partial().parse(req.body);
+      const parsed = insertCasinoSchema.partial().parse(req.body);
+      const data = {
+        ...parsed,
+        ...(parsed.affiliateLink !== undefined ? { affiliateLink: normalizeHttpUrl(parsed.affiliateLink) || parsed.affiliateLink } : {}),
+        ...(parsed.leaderboardApiUrl !== undefined ? { leaderboardApiUrl: normalizeHttpUrl(parsed.leaderboardApiUrl) || parsed.leaderboardApiUrl } : {}),
+        ...(parsed.logo !== undefined ? { logo: normalizeHttpUrl(parsed.logo) || parsed.logo } : {}),
+      };
       const casino = await storage.updateCasino(id, data);
       if (!casino) {
         return res.status(404).json({ error: "Casino not found" });
@@ -821,11 +958,31 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   });
 
   // Update casino account
-  // Updating/deleting by ID is admin-only until per-record ownership checks are implemented
-  app.patch("/api/casino-accounts/:id", adminAuth, async (req: Request, res: Response) => {
+  app.patch("/api/casino-accounts/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const id = parseInt(req.params.id);
-      const data = insertUserCasinoAccountSchema.partial().parse(req.body);
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+
+      const existing = await storage.getUserCasinoAccount(id);
+      if (!existing) return res.status(404).json({ error: "Casino account not found" });
+
+      const requesterId = getAuthedUserId(req);
+      if (!req.session?.isAdmin && (!requesterId || requesterId !== existing.userId)) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
+      const userPatchSchema = z.object({
+        username: z.string().min(1).optional(),
+        odId: z.string().min(1).optional(),
+      });
+
+      const patch = req.session?.isAdmin
+        ? insertUserCasinoAccountSchema.partial().parse(req.body)
+        : userPatchSchema.parse(req.body);
+
+      // If a non-admin changes anything, require re-verification
+      const data = req.session?.isAdmin ? patch : { ...patch, verified: false };
+
       const account = await storage.updateUserCasinoAccount(id, data);
       if (!account) {
         return res.status(404).json({ error: "Casino account not found" });
@@ -840,9 +997,18 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   });
 
   // Delete casino account
-  app.delete("/api/casino-accounts/:id", adminAuth, async (req: Request, res: Response) => {
+  app.delete("/api/casino-accounts/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+
+      const existing = await storage.getUserCasinoAccount(id);
+      if (!existing) return res.status(404).json({ error: "Casino account not found" });
+
+      const requesterId = getAuthedUserId(req);
+      if (!req.session?.isAdmin && (!requesterId || requesterId !== existing.userId)) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
       await storage.deleteUserCasinoAccount(id);
       res.status(204).send();
     } catch (error) {
@@ -866,10 +1032,29 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   });
 
   // Update wallet
-  app.patch("/api/wallets/:id", adminAuth, async (req: Request, res: Response) => {
+  app.patch("/api/wallets/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const id = parseInt(req.params.id);
-      const data = insertUserWalletSchema.partial().parse(req.body);
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+
+      const existing = await storage.getUserWallet(id);
+      if (!existing) return res.status(404).json({ error: "Wallet not found" });
+
+      const requesterId = getAuthedUserId(req);
+      if (!req.session?.isAdmin && (!requesterId || requesterId !== existing.userId)) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
+      const userPatchSchema = z.object({
+        solAddress: z.string().min(1).optional(),
+        screenshotUrl: z.string().min(1).optional(),
+      });
+
+      const patch = req.session?.isAdmin
+        ? insertUserWalletSchema.partial().parse(req.body)
+        : userPatchSchema.parse(req.body);
+
+      const data = req.session?.isAdmin ? patch : { ...patch, verified: false };
       const wallet = await storage.updateUserWallet(id, data);
       if (!wallet) {
         return res.status(404).json({ error: "Wallet not found" });
@@ -884,9 +1069,19 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   });
 
   // Delete wallet
-  app.delete("/api/wallets/:id", adminAuth, async (req: Request, res: Response) => {
+  app.delete("/api/wallets/:id", requireAuth, async (req: Request, res: Response) => {
     try {
-      const id = parseInt(req.params.id);
+      const id = parseInt(req.params.id, 10);
+      if (!Number.isFinite(id)) return res.status(400).json({ error: "Invalid id" });
+
+      const existing = await storage.getUserWallet(id);
+      if (!existing) return res.status(404).json({ error: "Wallet not found" });
+
+      const requesterId = getAuthedUserId(req);
+      if (!req.session?.isAdmin && (!requesterId || requesterId !== existing.userId)) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+
       await storage.deleteUserWallet(id);
       res.status(204).send();
     } catch (error) {

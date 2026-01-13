@@ -54,12 +54,14 @@ export interface IStorage {
   
   // User Casino Accounts
   getUserCasinoAccounts(userId: string): Promise<UserCasinoAccount[]>;
+  getUserCasinoAccount(id: number): Promise<UserCasinoAccount | undefined>;
   createUserCasinoAccount(account: InsertUserCasinoAccount): Promise<UserCasinoAccount>;
   updateUserCasinoAccount(id: number, data: Partial<InsertUserCasinoAccount>): Promise<UserCasinoAccount | undefined>;
   deleteUserCasinoAccount(id: number): Promise<boolean>;
   
   // User Wallets
   getUserWallets(userId: string): Promise<UserWallet[]>;
+  getUserWallet(id: number): Promise<UserWallet | undefined>;
   createUserWallet(wallet: InsertUserWallet): Promise<UserWallet>;
   updateUserWallet(id: number, data: Partial<InsertUserWallet>): Promise<UserWallet | undefined>;
   deleteUserWallet(id: number): Promise<boolean>;
@@ -273,8 +275,26 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(userCasinoAccounts).where(eq(userCasinoAccounts.userId, userId));
   }
 
+  async getUserCasinoAccount(id: number): Promise<UserCasinoAccount | undefined> {
+    const [row] = await db.select().from(userCasinoAccounts).where(eq(userCasinoAccounts.id, id));
+    return row || undefined;
+  }
+
   async createUserCasinoAccount(account: InsertUserCasinoAccount): Promise<UserCasinoAccount> {
-    const [result] = await db.insert(userCasinoAccounts).values(account).returning();
+    // Idempotent: one account per user per casino.
+    // If a user re-submits their info, we update the existing record and reset verification.
+    const [result] = await db
+      .insert(userCasinoAccounts)
+      .values(account)
+      .onConflictDoUpdate({
+        target: [userCasinoAccounts.userId, userCasinoAccounts.casinoId],
+        set: {
+          username: account.username,
+          odId: account.odId,
+          verified: false,
+        },
+      })
+      .returning();
     return result;
   }
 
@@ -293,8 +313,26 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(userWallets).where(eq(userWallets.userId, userId));
   }
 
+  async getUserWallet(id: number): Promise<UserWallet | undefined> {
+    const [row] = await db.select().from(userWallets).where(eq(userWallets.id, id));
+    return row || undefined;
+  }
+
   async createUserWallet(wallet: InsertUserWallet): Promise<UserWallet> {
-    const [result] = await db.insert(userWallets).values(wallet).returning();
+    // Idempotent: one wallet per user per casino.
+    // If a user re-submits, update and reset verification.
+    const [result] = await db
+      .insert(userWallets)
+      .values(wallet)
+      .onConflictDoUpdate({
+        target: [userWallets.userId, userWallets.casinoId],
+        set: {
+          solAddress: wallet.solAddress,
+          screenshotUrl: wallet.screenshotUrl ?? null,
+          verified: false,
+        },
+      })
+      .returning();
     return result;
   }
 

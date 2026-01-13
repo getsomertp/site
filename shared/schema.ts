@@ -1,5 +1,5 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, serial, numeric } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, serial, numeric, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -80,7 +80,10 @@ export const userCasinoAccounts = pgTable("user_casino_accounts", {
   odId: text("od_id").notNull(),
   verified: boolean("verified").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (t) => ({
+  // One account per user per casino
+  uniqUserCasino: uniqueIndex("user_casino_accounts_user_casino_unique").on(t.userId, t.casinoId),
+}));
 
 export const userCasinoAccountsRelations = relations(userCasinoAccounts, ({ one }) => ({
   user: one(users, { fields: [userCasinoAccounts.userId], references: [users.id] }),
@@ -96,7 +99,10 @@ export const userWallets = pgTable("user_wallets", {
   screenshotUrl: text("screenshot_url"),
   verified: boolean("verified").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (t) => ({
+  // One wallet per user per casino
+  uniqUserCasino: uniqueIndex("user_wallets_user_casino_unique").on(t.userId, t.casinoId),
+}));
 
 export const userWalletsRelations = relations(userWallets, ({ one }) => ({
   user: one(users, { fields: [userWallets.userId], references: [users.id] }),
