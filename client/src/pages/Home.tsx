@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Navigation } from "@/components/Navigation";
 import heroBg from "@assets/generated_images/dark_neon_casino_background.png";
+import { normalizeExternalUrl } from "@/lib/url";
 
 type Casino = {
   id: number;
@@ -200,7 +201,7 @@ export default function Home() {
 
                   {c.affiliateLink ? (
                     <Button asChild size="sm">
-                      <a href={c.affiliateLink} target="_blank" rel="noreferrer">
+                      <a href={normalizeExternalUrl(c.affiliateLink)} target="_blank" rel="noreferrer noopener">
                         Play
                       </a>
                     </Button>

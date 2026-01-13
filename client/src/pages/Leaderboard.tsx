@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Navigation } from "@/components/Navigation";
+import { normalizeExternalUrl } from "@/lib/url";
 import type { Casino } from "@shared/schema";
 
 type LeaderboardEntry = {
@@ -246,7 +247,11 @@ export default function Leaderboard() {
                             <Button 
                               className="mt-4 font-display"
                               style={{ backgroundColor: selectedCasino.color }}
-                              onClick={() => window.open(selectedCasino.affiliateLink, "_blank")}
+                              onClick={() => {
+                                const url = normalizeExternalUrl((selectedCasino as any)?.affiliateLink);
+                                if (!url) return;
+                                window.open(url, "_blank", "noopener,noreferrer");
+                              }}
                             >
                               Sign Up at {selectedCasino.name}
                             </Button>

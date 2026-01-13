@@ -20,6 +20,27 @@ import {
 import { db } from "./db";
 import { eq, and, desc, asc, sql, ilike, or } from "drizzle-orm";
 
+// Keep outbound casino links safe and consistently absolute.
+// Some older rows may have stored schemeless URLs like "acebet.com/...".
+function normalizeHttpUrl(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const s = String(value).trim();
+  if (!s) return undefined;
+  // allow internal/relative URLs like /uploads/... or /api/...
+  if (s.startsWith("/") || s.startsWith("data:")) return s;
+  if (/^https?:\/\//i.test(s)) return s;
+  return `https://${s.replace(/^\/\/+/, "")}`;
+}
+
+function normalizeCasino(c: Casino): Casino {
+  return {
+    ...c,
+    affiliateLink: normalizeHttpUrl((c as any).affiliateLink) || (c as any).affiliateLink,
+    leaderboardApiUrl: normalizeHttpUrl((c as any).leaderboardApiUrl) || (c as any).leaderboardApiUrl,
+    logo: normalizeHttpUrl((c as any).logo) || (c as any).logo,
+  } as Casino;
+}
+
 export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
@@ -147,31 +168,33 @@ export class DatabaseStorage implements IStorage {
 
   // Casinos
   async getCasinos(): Promise<Casino[]> {
-    return db.select().from(casinos).where(eq(casinos.isActive, true)).orderBy(asc(casinos.sortOrder));
+    const rows = await db.select().from(casinos).where(eq(casinos.isActive, true)).orderBy(asc(casinos.sortOrder));
+    return rows.map(normalizeCasino);
   }
 
   async getAllCasinos(): Promise<Casino[]> {
-    return db.select().from(casinos).orderBy(asc(casinos.sortOrder));
+    const rows = await db.select().from(casinos).orderBy(asc(casinos.sortOrder));
+    return rows.map(normalizeCasino);
   }
 
   async getCasino(id: number): Promise<Casino | undefined> {
     const [casino] = await db.select().from(casinos).where(eq(casinos.id, id));
-    return casino || undefined;
+    return casino ? normalizeCasino(casino) : undefined;
   }
 
   async getCasinoBySlug(slug: string): Promise<Casino | undefined> {
     const [casino] = await db.select().from(casinos).where(eq(casinos.slug, slug));
-    return casino || undefined;
+    return casino ? normalizeCasino(casino) : undefined;
   }
 
   async createCasino(insertCasino: InsertCasino): Promise<Casino> {
     const [casino] = await db.insert(casinos).values(insertCasino).returning();
-    return casino;
+    return normalizeCasino(casino);
   }
 
   async updateCasino(id: number, data: Partial<InsertCasino>): Promise<Casino | undefined> {
     const [casino] = await db.update(casinos).set(data).where(eq(casinos.id, id)).returning();
-    return casino || undefined;
+    return casino ? normalizeCasino(casino) : undefined;
   }
 
   async deleteCasino(id: number): Promise<boolean> {

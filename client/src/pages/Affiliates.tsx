@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Navigation } from "@/components/Navigation";
 import { useToast } from "@/hooks/use-toast";
+import { normalizeExternalUrl } from "@/lib/url";
 import type { Casino } from "@shared/schema";
 
 const benefits = [
@@ -191,7 +192,11 @@ export default function Affiliates() {
                                 ? "bg-gradient-to-r from-neon-gold to-amber-500 text-black hover:opacity-90" 
                                 : "bg-neon-purple hover:bg-neon-purple/80"
                             }`}
-                            onClick={() => window.open(casino.affiliateLink, "_blank")}
+                            onClick={() => {
+                              const url = normalizeExternalUrl((casino as any)?.affiliateLink);
+                              if (!url) return;
+                              window.open(url, "_blank", "noopener,noreferrer");
+                            }}
                             data-testid={`button-visit-${casino.slug}`}
                           >
                             Visit Site <ExternalLink className="ml-2 w-4 h-4" />
