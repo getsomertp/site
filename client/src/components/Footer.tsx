@@ -6,18 +6,29 @@ import { Card } from "@/components/ui/card";
 import { getQueryFn } from "@/lib/queryClient";
 import { normalizeExternalUrl } from "@/lib/url";
 
-type SiteSetting = {
-  key: string;
-  value: string;
-};
+type SiteSettingRow = { key: string; value: string };
+type SiteSettingsMap = Record<string, string>;
 
-function getSetting(settings: SiteSetting[] | undefined, key: string): string {
-  const row = (settings || []).find((s) => s.key === key);
-  return row?.value || "";
+// Public endpoint returns a map (Record<string,string>) while the admin endpoint returns rows.
+// Be resilient to either shape to avoid runtime crashes.
+function getSetting(settings: unknown, key: string): string {
+  if (!settings) return "";
+
+  if (Array.isArray(settings)) {
+    const row = (settings as SiteSettingRow[]).find((s) => s?.key === key);
+    return typeof row?.value === "string" ? row.value : "";
+  }
+
+  if (typeof settings === "object") {
+    const v = (settings as SiteSettingsMap)[key as keyof SiteSettingsMap];
+    return typeof v === "string" ? v : v == null ? "" : String(v);
+  }
+
+  return "";
 }
 
 export function Footer() {
-  const { data: settingsRaw } = useQuery<SiteSetting[] | null>({
+  const { data: settingsRaw } = useQuery<SiteSettingsMap | SiteSettingRow[] | null>({
     queryKey: ["/api/site/settings"],
     // Public endpoint, but be resilient if an upstream layer returns 401.
     queryFn: getQueryFn({ on401: "returnNull" }),
@@ -26,7 +37,7 @@ export function Footer() {
     retry: false,
   });
 
-  const settings = settingsRaw || [];
+  const settings = settingsRaw || {};
 
   const kick = normalizeExternalUrl(getSetting(settings, "kickUrl"));
   const discord = normalizeExternalUrl(getSetting(settings, "discordUrl"));
