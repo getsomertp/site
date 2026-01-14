@@ -7,7 +7,7 @@ FROM node:20-alpine AS build
 WORKDIR /app
 
 # Faster, reproducible-ish installs without requiring a lockfile
-COPY package.json .npmrc ./
+COPY package.json ./
 RUN npm install --no-audit --no-fund
 
 # Copy the rest of the project
