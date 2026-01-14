@@ -1,7 +1,7 @@
 import { 
   users, casinos, userCasinoAccounts, userWallets, giveaways, giveawayEntries, giveawayRequirements, leaderboardCache, userPayments,
   streamEvents, streamEventEntries, tournamentBrackets,
-  siteSettings, leaderboards, leaderboardEntries,
+  siteSettings, adminAuditLogs, leaderboards, leaderboardEntries,
   type User, type InsertUser,
   type Casino, type InsertCasino,
   type UserCasinoAccount, type InsertUserCasinoAccount,
@@ -14,15 +14,38 @@ import {
   type StreamEventEntry, type InsertStreamEventEntry,
   type TournamentBracket, type InsertTournamentBracket,
   type SiteSetting, type InsertSiteSetting,
+  type AdminAuditLog, type InsertAdminAuditLog,
   type Leaderboard, type InsertLeaderboard,
   type LeaderboardEntry, type InsertLeaderboardEntry
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, desc, asc, sql, ilike, or } from "drizzle-orm";
+import { eq, and, desc, asc, sql, ilike, or, inArray } from "drizzle-orm";
+
+// Keep outbound casino links safe and consistently absolute.
+// Some older rows may have stored schemeless URLs like "acebet.com/...".
+function normalizeHttpUrl(value: unknown): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const s = String(value).trim();
+  if (!s) return undefined;
+  // allow internal/relative URLs like /uploads/... or /api/...
+  if (s.startsWith("/") || s.startsWith("data:")) return s;
+  if (/^https?:\/\//i.test(s)) return s;
+  return `https://${s.replace(/^\/\/+/, "")}`;
+}
+
+function normalizeCasino(c: Casino): Casino {
+  return {
+    ...c,
+    affiliateLink: normalizeHttpUrl((c as any).affiliateLink) || (c as any).affiliateLink,
+    leaderboardApiUrl: normalizeHttpUrl((c as any).leaderboardApiUrl) || (c as any).leaderboardApiUrl,
+    logo: normalizeHttpUrl((c as any).logo) || (c as any).logo,
+  } as Casino;
+}
 
 export interface IStorage {
   // Users
   getUser(id: string): Promise<User | undefined>;
+  getUsersByIds(ids: string[]): Promise<User[]>;
   getUserByDiscordId(discordId: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   updateUser(id: string, data: Partial<InsertUser>): Promise<User | undefined>;
@@ -36,7 +59,12 @@ export interface IStorage {
   updateCasino(id: number, data: Partial<InsertCasino>): Promise<Casino | undefined>;
   deleteCasino(id: number): Promise<boolean>;
 
-  // Site settings (simple CMS)
+  
+
+// Admin audit logs
+listAdminAuditLogs(opts?: { q?: string; limit?: number; offset?: number }): Promise<AdminAuditLog[]>;
+createAdminAuditLog(log: InsertAdminAuditLog): Promise<AdminAuditLog>;
+// Site settings (simple CMS)
   getSiteSettings(): Promise<SiteSetting[]>;
   getSiteSetting(key: string): Promise<SiteSetting | undefined>;
   upsertSiteSetting(setting: InsertSiteSetting): Promise<SiteSetting>;
@@ -54,14 +82,14 @@ export interface IStorage {
   
   // User Casino Accounts
   getUserCasinoAccounts(userId: string): Promise<UserCasinoAccount[]>;
-  getUserCasinoAccountById(id: number): Promise<UserCasinoAccount | undefined>;
+  getUserCasinoAccount(id: number): Promise<UserCasinoAccount | undefined>;
   createUserCasinoAccount(account: InsertUserCasinoAccount): Promise<UserCasinoAccount>;
   updateUserCasinoAccount(id: number, data: Partial<InsertUserCasinoAccount>): Promise<UserCasinoAccount | undefined>;
   deleteUserCasinoAccount(id: number): Promise<boolean>;
   
   // User Wallets
   getUserWallets(userId: string): Promise<UserWallet[]>;
-  getUserWalletById(id: number): Promise<UserWallet | undefined>;
+  getUserWallet(id: number): Promise<UserWallet | undefined>;
   createUserWallet(wallet: InsertUserWallet): Promise<UserWallet>;
   updateUserWallet(id: number, data: Partial<InsertUserWallet>): Promise<UserWallet | undefined>;
   deleteUserWallet(id: number): Promise<boolean>;
@@ -76,8 +104,10 @@ export interface IStorage {
   
   // Giveaway Entries
   getGiveawayEntries(giveawayId: number): Promise<GiveawayEntry[]>;
+  getGiveawayEntriesWithUsers(giveawayId: number): Promise<(GiveawayEntry & { user: User })[]>;
   getGiveawayEntryCount(giveawayId: number): Promise<number>;
   hasUserEntered(giveawayId: number, userId: string): Promise<boolean>;
+  getUserEnteredGiveawayIds(userId: string): Promise<number[]>;
   createGiveawayEntry(entry: InsertGiveawayEntry): Promise<GiveawayEntry>;
   
   // Giveaway Requirements
@@ -99,6 +129,19 @@ export interface IStorage {
     payments: UserPayment[];
     totalPayments: string;
   } | undefined>;
+
+  // Admin verification queue
+  getPendingVerifications(opts?: { q?: string; limit?: number }): Promise<{
+    casinoAccounts: (UserCasinoAccount & { user: User; casino: Casino })[];
+    wallets: (UserWallet & { user: User; casino: Casino })[];
+  }>;
+
+  // Recent giveaway winners for public display
+  getRecentGiveawayWinners(limit?: number): Promise<Array<{
+    giveaway: Giveaway;
+    winner: User;
+    casino: Casino | null;
+  }>>;
   
   // Stream Events
   getStreamEvents(type?: string): Promise<StreamEvent[]>;
@@ -109,6 +152,8 @@ export interface IStorage {
   
   // Stream Event Entries
   getStreamEventEntries(eventId: number): Promise<StreamEventEntry[]>;
+  getStreamEventEntryCount(eventId: number): Promise<number>;
+  getStreamEventEntryForUser(eventId: number, userId: string): Promise<StreamEventEntry | undefined>;
   getStreamEventEntry(id: number): Promise<StreamEventEntry | undefined>;
   createStreamEventEntry(entry: InsertStreamEventEntry): Promise<StreamEventEntry>;
   updateStreamEventEntry(id: number, data: Partial<InsertStreamEventEntry>): Promise<StreamEventEntry | undefined>;
@@ -128,6 +173,12 @@ export class DatabaseStorage implements IStorage {
     return user || undefined;
   }
 
+  async getUsersByIds(ids: string[]): Promise<User[]> {
+    const uniq = Array.from(new Set((ids || []).filter(Boolean).map(String)));
+    if (uniq.length === 0) return [];
+    return db.select().from(users).where(inArray(users.id, uniq));
+  }
+
   async getUserByDiscordId(discordId: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.discordId, discordId));
     return user || undefined;
@@ -145,31 +196,33 @@ export class DatabaseStorage implements IStorage {
 
   // Casinos
   async getCasinos(): Promise<Casino[]> {
-    return db.select().from(casinos).where(eq(casinos.isActive, true)).orderBy(asc(casinos.sortOrder));
+    const rows = await db.select().from(casinos).where(eq(casinos.isActive, true)).orderBy(asc(casinos.sortOrder));
+    return rows.map(normalizeCasino);
   }
 
   async getAllCasinos(): Promise<Casino[]> {
-    return db.select().from(casinos).orderBy(asc(casinos.sortOrder));
+    const rows = await db.select().from(casinos).orderBy(asc(casinos.sortOrder));
+    return rows.map(normalizeCasino);
   }
 
   async getCasino(id: number): Promise<Casino | undefined> {
     const [casino] = await db.select().from(casinos).where(eq(casinos.id, id));
-    return casino || undefined;
+    return casino ? normalizeCasino(casino) : undefined;
   }
 
   async getCasinoBySlug(slug: string): Promise<Casino | undefined> {
     const [casino] = await db.select().from(casinos).where(eq(casinos.slug, slug));
-    return casino || undefined;
+    return casino ? normalizeCasino(casino) : undefined;
   }
 
   async createCasino(insertCasino: InsertCasino): Promise<Casino> {
     const [casino] = await db.insert(casinos).values(insertCasino).returning();
-    return casino;
+    return normalizeCasino(casino);
   }
 
   async updateCasino(id: number, data: Partial<InsertCasino>): Promise<Casino | undefined> {
     const [casino] = await db.update(casinos).set(data).where(eq(casinos.id, id)).returning();
-    return casino || undefined;
+    return casino ? normalizeCasino(casino) : undefined;
   }
 
   async deleteCasino(id: number): Promise<boolean> {
@@ -273,13 +326,26 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(userCasinoAccounts).where(eq(userCasinoAccounts.userId, userId));
   }
 
-  async getUserCasinoAccountById(id: number): Promise<UserCasinoAccount | undefined> {
+  async getUserCasinoAccount(id: number): Promise<UserCasinoAccount | undefined> {
     const [row] = await db.select().from(userCasinoAccounts).where(eq(userCasinoAccounts.id, id));
     return row || undefined;
   }
 
   async createUserCasinoAccount(account: InsertUserCasinoAccount): Promise<UserCasinoAccount> {
-    const [result] = await db.insert(userCasinoAccounts).values(account).returning();
+    // Idempotent: one account per user per casino.
+    // If a user re-submits their info, we update the existing record and reset verification.
+    const [result] = await db
+      .insert(userCasinoAccounts)
+      .values(account)
+      .onConflictDoUpdate({
+        target: [userCasinoAccounts.userId, userCasinoAccounts.casinoId],
+        set: {
+          username: account.username,
+          odId: account.odId,
+          verified: false,
+        },
+      })
+      .returning();
     return result;
   }
 
@@ -298,13 +364,26 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(userWallets).where(eq(userWallets.userId, userId));
   }
 
-  async getUserWalletById(id: number): Promise<UserWallet | undefined> {
+  async getUserWallet(id: number): Promise<UserWallet | undefined> {
     const [row] = await db.select().from(userWallets).where(eq(userWallets.id, id));
     return row || undefined;
   }
 
   async createUserWallet(wallet: InsertUserWallet): Promise<UserWallet> {
-    const [result] = await db.insert(userWallets).values(wallet).returning();
+    // Idempotent: one wallet per user per casino.
+    // If a user re-submits, update and reset verification.
+    const [result] = await db
+      .insert(userWallets)
+      .values(wallet)
+      .onConflictDoUpdate({
+        target: [userWallets.userId, userWallets.casinoId],
+        set: {
+          solAddress: wallet.solAddress,
+          screenshotUrl: wallet.screenshotUrl ?? null,
+          verified: false,
+        },
+      })
+      .returning();
     return result;
   }
 
@@ -354,6 +433,20 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(giveawayEntries).where(eq(giveawayEntries.giveawayId, giveawayId));
   }
 
+  async getGiveawayEntriesWithUsers(giveawayId: number): Promise<(GiveawayEntry & { user: User })[]> {
+    const rows = await db
+      .select({
+        entry: giveawayEntries,
+        user: users,
+      })
+      .from(giveawayEntries)
+      .innerJoin(users, eq(giveawayEntries.userId, users.id))
+      .where(eq(giveawayEntries.giveawayId, giveawayId))
+      .orderBy(desc(giveawayEntries.createdAt));
+
+    return rows.map((r) => ({ ...r.entry, user: r.user }));
+  }
+
   async getGiveawayEntryCount(giveawayId: number): Promise<number> {
     const result = await db.select({ count: sql<number>`count(*)` })
       .from(giveawayEntries)
@@ -366,6 +459,15 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(giveawayEntries.giveawayId, giveawayId), eq(giveawayEntries.userId, userId)));
     return !!entry;
   }
+
+  async getUserEnteredGiveawayIds(userId: string): Promise<number[]> {
+    const rows = await db
+      .select({ giveawayId: giveawayEntries.giveawayId })
+      .from(giveawayEntries)
+      .where(eq(giveawayEntries.userId, userId));
+    return rows.map(r => Number(r.giveawayId));
+  }
+
 
   async createGiveawayEntry(entry: InsertGiveawayEntry): Promise<GiveawayEntry> {
     const [result] = await db.insert(giveawayEntries).values(entry).returning();
@@ -503,6 +605,23 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(streamEventEntries).where(eq(streamEventEntries.eventId, eventId)).orderBy(asc(streamEventEntries.createdAt));
   }
 
+  async getStreamEventEntryCount(eventId: number): Promise<number> {
+    const [row] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(streamEventEntries)
+      .where(eq(streamEventEntries.eventId, eventId));
+    return Number(row?.count || 0);
+  }
+
+  async getStreamEventEntryForUser(eventId: number, userId: string): Promise<StreamEventEntry | undefined> {
+    const [row] = await db
+      .select()
+      .from(streamEventEntries)
+      .where(and(eq(streamEventEntries.eventId, eventId), eq(streamEventEntries.userId, userId)))
+      .limit(1);
+    return row || undefined;
+  }
+
   async getStreamEventEntry(id: number): Promise<StreamEventEntry | undefined> {
     const [entry] = await db.select().from(streamEventEntries).where(eq(streamEventEntries.id, id));
     return entry || undefined;
@@ -542,6 +661,171 @@ export class DatabaseStorage implements IStorage {
     await db.delete(tournamentBrackets).where(eq(tournamentBrackets.eventId, eventId));
     return true;
   }
+
+  // Admin verification queue (pending casino links + wallet proofs)
+  async getPendingVerifications(opts?: { q?: string; limit?: number }): Promise<{
+    casinoAccounts: (UserCasinoAccount & { user: User; casino: Casino })[];
+    wallets: (UserWallet & { user: User; casino: Casino })[];
+  }> {
+    const q = String(opts?.q || '').trim();
+    const limit = Math.min(Math.max(Number(opts?.limit || 200), 1), 500);
+    const pattern = `%${q}%`;
+
+    const whereAccounts: any = q
+      ? and(
+          eq(userCasinoAccounts.verified, false),
+          or(
+            ilike(users.discordUsername, pattern),
+            ilike(users.discordId, pattern),
+            ilike(users.kickUsername, pattern),
+            ilike(userCasinoAccounts.username, pattern),
+            ilike(userCasinoAccounts.odId, pattern),
+            ilike(casinos.name, pattern),
+          ),
+        )
+      : eq(userCasinoAccounts.verified, false);
+
+    const accountRows = await db
+      .select({
+        id: userCasinoAccounts.id,
+        userId: userCasinoAccounts.userId,
+        casinoId: userCasinoAccounts.casinoId,
+        username: userCasinoAccounts.username,
+        odId: userCasinoAccounts.odId,
+        verified: userCasinoAccounts.verified,
+        createdAt: userCasinoAccounts.createdAt,
+        user: users,
+        casino: casinos,
+      })
+      .from(userCasinoAccounts)
+      .leftJoin(users, eq(userCasinoAccounts.userId, users.id))
+      .leftJoin(casinos, eq(userCasinoAccounts.casinoId, casinos.id))
+      .where(whereAccounts)
+      .orderBy(desc(userCasinoAccounts.createdAt))
+      .limit(limit);
+
+    const whereWallets: any = q
+      ? and(
+          eq(userWallets.verified, false),
+          or(
+            ilike(users.discordUsername, pattern),
+            ilike(users.discordId, pattern),
+            ilike(users.kickUsername, pattern),
+            ilike(userWallets.solAddress, pattern),
+            ilike(casinos.name, pattern),
+          ),
+        )
+      : eq(userWallets.verified, false);
+
+    const walletRows = await db
+      .select({
+        id: userWallets.id,
+        userId: userWallets.userId,
+        casinoId: userWallets.casinoId,
+        solAddress: userWallets.solAddress,
+        screenshotUrl: userWallets.screenshotUrl,
+        verified: userWallets.verified,
+        createdAt: userWallets.createdAt,
+        user: users,
+        casino: casinos,
+      })
+      .from(userWallets)
+      .leftJoin(users, eq(userWallets.userId, users.id))
+      .leftJoin(casinos, eq(userWallets.casinoId, casinos.id))
+      .where(whereWallets)
+      .orderBy(desc(userWallets.createdAt))
+      .limit(limit);
+
+    return {
+      casinoAccounts: accountRows
+        .filter((r) => r.user && r.casino)
+        .map((r: any) => ({
+          id: r.id,
+          userId: r.userId,
+          casinoId: r.casinoId,
+          username: r.username,
+          odId: r.odId,
+          verified: r.verified,
+          createdAt: r.createdAt,
+          user: r.user,
+          casino: normalizeCasino(r.casino),
+        })),
+      wallets: walletRows
+        .filter((r) => r.user && r.casino)
+        .map((r: any) => ({
+          id: r.id,
+          userId: r.userId,
+          casinoId: r.casinoId,
+          solAddress: r.solAddress,
+          screenshotUrl: r.screenshotUrl,
+          verified: r.verified,
+          createdAt: r.createdAt,
+          user: r.user,
+          casino: normalizeCasino(r.casino),
+        })),
+    };
+  }
+
+  // Recent giveaway winners for public display
+  async getRecentGiveawayWinners(limit = 6): Promise<Array<{ giveaway: Giveaway; winner: User; casino: Casino | null }>> {
+    const n = Math.min(Math.max(Number(limit || 6), 1), 50);
+    const now = new Date();
+
+    const rows = await db
+      .select({
+        giveaway: giveaways,
+        winner: users,
+        casino: casinos,
+      })
+      .from(giveaways)
+      .leftJoin(users, eq(giveaways.winnerId, users.id))
+      .leftJoin(casinos, eq(giveaways.casinoId, casinos.id))
+      .where(and(
+        sql`${giveaways.winnerId} IS NOT NULL`,
+        sql`${giveaways.endsAt} <= ${now}`
+      ))
+      .orderBy(desc(giveaways.endsAt))
+      .limit(n);
+
+    return rows
+      .filter((r: any) => r.winner)
+      .map((r: any) => ({
+        giveaway: r.giveaway,
+        winner: r.winner,
+        casino: r.casino ? normalizeCasino(r.casino) : null,
+      }));
+  }
+
+async listAdminAuditLogs(opts?: { q?: string; limit?: number; offset?: number }): Promise<AdminAuditLog[]> {
+  const q = String(opts?.q || "").trim();
+  const limit = Math.min(Math.max(Number(opts?.limit || 200), 1), 500);
+  const offset = Math.max(Number(opts?.offset || 0), 0);
+
+  const where = q
+    ? sql`(${adminAuditLogs.action} ILIKE ${"%" + q + "%"}
+        OR ${adminAuditLogs.entityType} ILIKE ${"%" + q + "%"}
+        OR ${adminAuditLogs.entityId} ILIKE ${"%" + q + "%"}
+        OR ${adminAuditLogs.details} ILIKE ${"%" + q + "%"}
+        OR ${adminAuditLogs.ip} ILIKE ${"%" + q + "%"}
+      )`
+    : undefined;
+
+  const rows = await db
+    .select()
+    .from(adminAuditLogs)
+    .where(where as any)
+    .orderBy(sql`${adminAuditLogs.createdAt} DESC`)
+    .limit(limit)
+    .offset(offset);
+
+  return rows;
+}
+
+async createAdminAuditLog(log: InsertAdminAuditLog): Promise<AdminAuditLog> {
+  const [row] = await db.insert(adminAuditLogs).values(log as any).returning();
+  return row;
+}
+
 }
 
 export const storage = new DatabaseStorage();

@@ -19,7 +19,12 @@ async function main() {
   const pool = new Pool({ connectionString: url });
   try {
     await pool.query(`CREATE EXTENSION IF NOT EXISTS pgcrypto;`);
-    console.log("✅ DB bootstrap complete (pgcrypto ready)");
+    // If an older auth/session table exists (from earlier builds), it can confuse drizzle-kit push
+    // into thinking it should be renamed into one of our new tables (non-interactive deploys will fail).
+    // This is safe because our app recreates its session table on boot.
+    await pool.query(`DROP TABLE IF EXISTS "session" CASCADE;`);
+    await pool.query(`DROP TABLE IF EXISTS "sessions" CASCADE;`);
+    console.log("✅ DB bootstrap complete (pgcrypto ready; legacy session tables dropped if present)");
   } catch (err: any) {
     // If the DB role cannot create extensions, Drizzle push may still work
     // if your schema doesn't rely on gen_random_uuid(); but in our case it does.

@@ -1,5 +1,5 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, integer, boolean, timestamp, serial, numeric, json, index } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, boolean, timestamp, serial, numeric, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -9,19 +9,6 @@ import { z } from "zod";
 // Valid tier options including "none"
 export const CASINO_TIERS = ["platinum", "gold", "silver", "none"] as const;
 export type CasinoTier = typeof CASINO_TIERS[number];
-
-// Sessions table used by connect-pg-simple (express-session).
-// Keeping it in Drizzle schema prevents `drizzle-kit push` from treating it as an unmanaged table.
-export const sessions = pgTable(
-  "session",
-  {
-    sid: varchar("sid").notNull().primaryKey(),
-    sess: json("sess").notNull(),
-    expire: timestamp("expire", { precision: 6 }).notNull(),
-  },
-  (table) => [index("IDX_session_expire").on(table.expire)]
-);
-
 
 // Casinos - Admin managed
 export const casinos = pgTable("casinos", {
@@ -93,7 +80,10 @@ export const userCasinoAccounts = pgTable("user_casino_accounts", {
   odId: text("od_id").notNull(),
   verified: boolean("verified").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (t) => ({
+  // One account per user per casino
+  uniqUserCasino: uniqueIndex("user_casino_accounts_user_casino_unique").on(t.userId, t.casinoId),
+}));
 
 export const userCasinoAccountsRelations = relations(userCasinoAccounts, ({ one }) => ({
   user: one(users, { fields: [userCasinoAccounts.userId], references: [users.id] }),
@@ -109,7 +99,10 @@ export const userWallets = pgTable("user_wallets", {
   screenshotUrl: text("screenshot_url"),
   verified: boolean("verified").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow(),
-});
+}, (t) => ({
+  // One wallet per user per casino
+  uniqUserCasino: uniqueIndex("user_wallets_user_casino_unique").on(t.userId, t.casinoId),
+}));
 
 export const userWalletsRelations = relations(userWallets, ({ one }) => ({
   user: one(users, { fields: [userWallets.userId], references: [users.id] }),
@@ -164,6 +157,20 @@ export const giveawayEntriesRelations = relations(giveawayEntries, ({ one }) => 
   giveaway: one(giveaways, { fields: [giveawayEntries.giveawayId], references: [giveaways.id] }),
   user: one(users, { fields: [giveawayEntries.userId], references: [users.id] }),
 }));
+
+
+
+// Admin Audit Logs - records important admin actions for traceability
+export const adminAuditLogs = pgTable("admin_audit_logs", {
+  id: serial("id").primaryKey(),
+  action: text("action").notNull(),
+  entityType: text("entity_type"),
+  entityId: text("entity_id"),
+  details: text("details"),
+  ip: text("ip"),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
 
 // Leaderboard cache
 export const leaderboardCache = pgTable("leaderboard_cache", {
@@ -256,6 +263,9 @@ export const streamEvents = pgTable("stream_events", {
 export const streamEventEntries = pgTable("stream_event_entries", {
   id: serial("id").primaryKey(),
   eventId: integer("event_id").notNull().references(() => streamEvents.id, { onDelete: "cascade" }),
+  // Optional linkage to a site user (Discord auth). When present, we can enforce
+  // one entry per user per event.
+  userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
   displayName: text("display_name").notNull(),
   slotChoice: text("slot_choice").notNull(),
   category: text("category"),
@@ -307,6 +317,7 @@ export const insertStreamEventEntrySchema = createInsertSchema(streamEventEntrie
 export const insertTournamentBracketSchema = createInsertSchema(tournamentBrackets).omit({ id: true, createdAt: true });
 
 export const insertSiteSettingSchema = createInsertSchema(siteSettings).omit({ id: true, updatedAt: true });
+export const insertAdminAuditLogSchema = createInsertSchema(adminAuditLogs).omit({ id: true, createdAt: true });
 
 export const insertLeaderboardSchema = createInsertSchema(leaderboards).omit({ id: true, createdAt: true, lastFetchedAt: true }).extend({
   periodType: z.enum(["weekly", "biweekly", "monthly", "custom"]).default("monthly"),
@@ -342,6 +353,10 @@ export type InsertTournamentBracket = z.infer<typeof insertTournamentBracketSche
 
 export type SiteSetting = typeof siteSettings.$inferSelect;
 export type InsertSiteSetting = z.infer<typeof insertSiteSettingSchema>;
+
+export type AdminAuditLog = typeof adminAuditLogs.$inferSelect;
+export type InsertAdminAuditLog = z.infer<typeof insertAdminAuditLogSchema>;
+
 
 export type Leaderboard = typeof leaderboards.$inferSelect;
 export type InsertLeaderboard = z.infer<typeof insertLeaderboardSchema>;

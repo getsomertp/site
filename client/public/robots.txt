@@ -1,6 +1,2 @@
 User-agent: *
 Allow: /
-
-# Block private areas (update if your admin path differs)
-Disallow: /admin
-Disallow: /api

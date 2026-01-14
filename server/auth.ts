@@ -2,6 +2,7 @@ import type { Express, Request } from "express";
 import passport from "passport";
 import { Strategy as DiscordStrategy, type Profile as DiscordProfile } from "passport-discord";
 import { storage } from "./storage";
+import crypto from "crypto";
 
 declare module "express-session" {
   interface SessionData {
@@ -47,8 +48,9 @@ export function setupAuth(app: Express) {
 
             const existing = await storage.getUserByDiscordId(discordId);
             const user = existing
-              ? await storage.updateUser(existing.id, { discordUsername, discordAvatar })
+              ? (await storage.updateUser(existing.id, { discordUsername, discordAvatar })) || existing
               : await storage.createUser({
+                  id: crypto.randomUUID(),
                   discordId,
                   discordUsername,
                   discordAvatar,
@@ -57,6 +59,7 @@ export function setupAuth(app: Express) {
 
             done(null, user);
           } catch (err) {
+            console.error("Discord auth error:", err);
             done(err as any);
           }
         },

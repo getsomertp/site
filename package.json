@@ -11,8 +11,7 @@
     "db:bootstrap": "tsx script/dbBootstrap.ts",
     "start": "npm run db:bootstrap && npm run db:push && npm run start:app",
     "check": "tsc",
-    "db:push": "drizzle-kit push",
-    "db:seed": "tsx script/dbSeed.ts"
+    "db:push": "drizzle-kit push"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
@@ -81,8 +80,13 @@
     "ws": "^8.18.0",
     "zod": "^3.25.76",
     "zod-validation-error": "^3.4.0",
-    "nanoid": "^5.1.0",
-    "multer": "^1.4.5-lts.1"
+    "drizzle-kit": "^0.31.4",
+    "tsx": "^4.20.5",
+    "multer": "^1.4.5-lts.1",
+    "@aws-sdk/client-s3": "^3.540.0",
+    "@aws-sdk/s3-request-presigner": "^3.540.0",
+    "@sentry/node": "^8.0.0",
+    "@sentry/react": "^8.0.0"
   },
   "devDependencies": {
     "@replit/vite-plugin-cartographer": "^0.4.4",
@@ -101,14 +105,11 @@
     "@types/ws": "^8.5.13",
     "@vitejs/plugin-react": "^5.0.4",
     "autoprefixer": "^10.4.21",
-    "drizzle-kit": "^0.31.4",
     "esbuild": "^0.25.0",
     "postcss": "^8.5.6",
     "tailwindcss": "^4.1.14",
-    "tsx": "^4.20.5",
     "typescript": "5.6.3",
-    "vite": "^7.1.9",
-    "@types/multer": "^1.4.12"
+    "vite": "^7.1.9"
   },
   "optionalDependencies": {
     "bufferutil": "^4.0.8"
