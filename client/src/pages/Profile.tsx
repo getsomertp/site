@@ -175,7 +175,7 @@ export default function Profile() {
     }
 
     const json = await res.json();
-    return { url: String(json?.url || ""), key: String(json?.key || "") };
+    return { key: String(json?.key || "") };
   }
 
   const saveWalletMutation = useMutation({
@@ -192,15 +192,15 @@ export default function Profile() {
       if (isEditing) {
         if (!inputs.file) throw new Error("Screenshot proof is required");
         const uploaded = await uploadWalletProof(casinoId, inputs.file);
-        screenshotUrl = uploaded.url;
+        screenshotUrl = uploaded.key;
       }
 
       // Idempotent upsert on the server
-      const res = await apiRequest("POST", `/api/users/${userId}/wallets`, {
-        casinoId,
-        solAddress,
-        screenshotUrl,
-      });
+      const payload: any = { casinoId, solAddress };
+      if (isEditing) payload.screenshotUrl = screenshotUrl;
+
+      // Idempotent upsert on the server
+      const res = await apiRequest("POST", `/api/users/${userId}/wallets`, payload);
       return (await res.json()) as UserWallet;
     },
     onSuccess: async () => {
@@ -232,7 +232,7 @@ export default function Profile() {
   const loggedIn = Boolean(userId);
 
 const hasCasinoLink = Boolean(profile?.casinoAccounts?.length);
-const hasWalletProof = Boolean(profile?.wallets?.some((w) => Boolean(w.solAddress) && Boolean(w.screenshotUrl)));
+const hasWalletProof = Boolean(profile?.wallets?.some((w) => Boolean(w.solAddress) && (Boolean((w as any).hasProof) || Boolean((w as any).screenshotUrl))));
 const isVerified = Boolean(
   profile?.kickVerified ||
   profile?.casinoAccounts?.some((a) => Boolean((a as any).verified)) ||
@@ -588,20 +588,12 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
                         <div className="grid gap-2">
                           <Label>Proof Screenshot</Label>
                           <div className="flex flex-col gap-2">
-                            {existing?.screenshotUrl ? (
-                              <a
-                                href={existing.screenshotUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center gap-2 text-sm text-primary hover:underline"
-                              >
-                                <ExternalLink className="h-4 w-4" /> View current proof
-                              </a>
+                            {(Boolean((existing as any)?.hasProof) || Boolean((existing as any)?.screenshotUrl)) ? (
+                              <p className="text-sm text-muted-foreground">Proof uploaded (admin-only).</p>
                             ) : (
-                              <p className="text-xs text-muted-foreground">No proof uploaded yet.</p>
+                              <p className="text-sm text-muted-foreground">No proof uploaded yet.</p>
                             )}
-
-                            <Input
+<Input
                               type="file"
                               accept="image/*"
                               disabled={!isEditing}
@@ -635,7 +627,7 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
                           )}
                           <Button
                             onClick={() => saveWalletMutation.mutate(casino.id)}
-                            disabled={saveWalletMutation.isPending}
+                            disabled={saveWalletMutation.isPending || (!isEditing && Boolean(existing))}
                             className="min-w-32"
                           >
                             {saveWalletMutation.isPending ? (
