@@ -170,10 +170,13 @@ export default function Home() {
     },
   });
 
-  const { data: siteSettings = {} } = useQuery<Record<string, string>>({
+  const { data: siteSettingsRaw } = useQuery<Record<string, string> | null>({
     queryKey: ["/api/site/settings"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
+
+  // Guard against null (e.g., if a proxy/auth layer returns 401).
+  const siteSettings = (siteSettingsRaw as any) || {};
 
   const { data: homeLb } = useQuery<HomeLeaderboard>({
     queryKey: ["/api/home/leaderboard"],

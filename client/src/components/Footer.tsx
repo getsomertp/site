@@ -17,13 +17,16 @@ function getSetting(settings: SiteSetting[] | undefined, key: string): string {
 }
 
 export function Footer() {
-  const { data: settings } = useQuery<SiteSetting[]>({
+  const { data: settingsRaw } = useQuery<SiteSetting[] | null>({
     queryKey: ["/api/site/settings"],
-    queryFn: getQueryFn({ on401: "throw" }),
+    // Public endpoint, but be resilient if an upstream layer returns 401.
+    queryFn: getQueryFn({ on401: "returnNull" }),
     staleTime: 60_000,
     refetchOnWindowFocus: false,
     retry: false,
   });
+
+  const settings = settingsRaw || [];
 
   const kick = normalizeExternalUrl(getSetting(settings, "kickUrl"));
   const discord = normalizeExternalUrl(getSetting(settings, "discordUrl"));
