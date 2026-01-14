@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Trophy, Crown, Medal, Award, TrendingUp, Calendar, ChevronDown } from "lucide-react";
@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Navigation } from "@/components/Navigation";
+import { Footer } from "@/components/Footer";
+import { normalizeExternalUrl } from "@/lib/url";
 import type { Casino } from "@shared/schema";
 
 type LeaderboardEntry = {
@@ -49,9 +51,36 @@ function getTierColor(tier: string) {
   }
 }
 
+function formatTimeRemaining(iso?: string) {
+  if (!iso) return "--";
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms)) return "--";
+  if (ms <= 0) return "Ended";
+
+  const totalMinutes = Math.floor(ms / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+
+  const parts: string[] = [];
+  if (days) parts.push(`${days}d`);
+  if (hours || days) parts.push(`${hours}h`);
+  parts.push(`${minutes}m`);
+  return parts.join(" ");
+}
+
 export default function Leaderboard() {
   const [period, setPeriod] = useState("monthly");
   const [selectedCasinoSlug, setSelectedCasinoSlug] = useState<string>("");
+
+  useEffect(() => {
+    // Allow deep links from the homepage: /leaderboard?casino=stake&period=monthly
+    const params = new URLSearchParams(window.location.search);
+    const slug = params.get("casino");
+    const p = params.get("period");
+    if (slug) setSelectedCasinoSlug(slug);
+    if (p && ["weekly", "monthly", "biweekly"].includes(p)) setPeriod(p);
+  }, []);
 
   const { data: casinos = [], isLoading: loadingCasinos } = useQuery<Casino[]>({
     queryKey: ["/api/casinos"],
@@ -61,8 +90,18 @@ export default function Leaderboard() {
     queryKey: ["/api/leaderboards/active"],
   });
 
-  const activeCasinos = casinos.filter(c => c.isActive);
+  const activeCasinos = casinos.filter((c) => c.isActive !== false);
   const selectedCasino = casinos.find(c => c.slug === selectedCasinoSlug) || activeCasinos[0];
+  const selectedCasinoTier = (selectedCasino?.tier || "none") as string;
+
+  useEffect(() => {
+    if (!selectedCasino) return;
+    const isPeriodAvailable = (p: string) =>
+      activeLeaderboards.some((lb: any) => lb.periodType === p && lb.casinoId === selectedCasino.id);
+    if (isPeriodAvailable(period)) return;
+    const firstAvailable = ["monthly", "weekly", "biweekly"].find(isPeriodAvailable);
+    if (firstAvailable) setPeriod(firstAvailable);
+  }, [selectedCasino?.id, activeLeaderboards, period]);
 
   const selectedLb = activeLeaderboards.find((lb: any) => lb.periodType === period && (!selectedCasino || lb.casinoId === selectedCasino.id))
     || activeLeaderboards.find((lb: any) => !selectedCasino || lb.casinoId === selectedCasino.id);
@@ -87,16 +126,28 @@ export default function Leaderboard() {
         data: (leaderboardEntries || []).map((e: any) => ({
           rank: e.rank,
           username: e.username,
-          odId: e.userId || undefined,
+          odId: e.externalUserId || e.userId || undefined,
           wagered: Number(e.value ?? 0),
-          prize: "",
-          avatar: "",
-          change: "",
+          prize: e.prize ? String(e.prize) : "",
+          avatar: String(e.username || "U").slice(0, 2).toUpperCase(),
+          change: e.change ? String(e.change) : "",
         })),
       }
     : undefined;
 
-  const prizePool = period === "monthly" ? "$150,000" : period === "weekly" ? "$25,000" : "Eternal Glory";
+  const prizePool = (selectedLb as any)?.prizePool
+    ? `$${Number((selectedLb as any).prizePool).toLocaleString()}`
+    : "--";
+
+  const resetAtIso: string | undefined = selectedLb?.endAt
+    ? new Date(selectedLb.endAt).toISOString()
+    : (selectedLb?.startAt && selectedLb?.durationDays)
+      ? new Date(new Date(selectedLb.startAt).getTime() + Number(selectedLb.durationDays) * 24 * 60 * 60 * 1000).toISOString()
+      : undefined;
+
+  const resetAtText = resetAtIso ? new Date(resetAtIso).toLocaleString() : "--";
+  const resetInText = resetAtIso ? formatTimeRemaining(resetAtIso) : "--";
+  const lastUpdatedText = selectedLb?.lastFetchedAt ? new Date(selectedLb.lastFetchedAt).toLocaleString() : null;
 
   return (
     <div className="min-h-screen">
@@ -178,9 +229,9 @@ export default function Leaderboard() {
                           )}
                           <div>
                             <h3 className="font-display font-bold text-white">{selectedCasino.name}</h3>
-                            {selectedCasino.tier !== "none" && (
+                            {selectedCasinoTier !== "none" && (
                               <span className={`text-xs px-2 py-0.5 rounded-full bg-gradient-to-r ${getTierColor(selectedCasino.tier)} text-white`}>
-                                {selectedCasino.tier.toUpperCase()}
+                                {selectedCasinoTier.toUpperCase()}
                               </span>
                             )}
                           </div>
@@ -196,28 +247,56 @@ export default function Leaderboard() {
                         <p className="text-xs text-muted-foreground">Prize Pool</p>
                       </div>
                       <div className="text-center px-6">
-                        <p className="text-2xl font-display font-bold text-neon-purple">18d 5h</p>
-                        <p className="text-xs text-muted-foreground">Until Reset</p>
+                        <p
+                          className="text-2xl font-display font-bold text-neon-purple"
+                          title={resetAtText !== "--" ? `Resets at: ${resetAtText}` : undefined}
+                          data-testid="text-reset-in"
+                        >
+                          {resetInText}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Until Reset
+                          {lastUpdatedText ? (
+                            <span className="block text-[10px] text-white/40 mt-1">
+                              Updated: {lastUpdatedText}
+                            </span>
+                          ) : null}
+                        </p>
                       </div>
                     </div>
                   </div>
                 </Card>
               </motion.div>
 
-              <Tabs defaultValue="monthly" className="w-full" onValueChange={setPeriod}>
+              <Tabs value={period} className="w-full" onValueChange={setPeriod}>
                 <TabsList className="grid w-full grid-cols-3 mb-8 bg-card/50">
-                  <TabsTrigger value="weekly" className="font-display" data-testid="tab-weekly">
+                  <TabsTrigger
+                    value="weekly"
+                    className="font-display"
+                    data-testid="tab-weekly"
+                    disabled={!activeLeaderboards.some((lb: any) => lb.periodType === "weekly" && (!selectedCasino || lb.casinoId === selectedCasino.id))}
+                  >
                     <Calendar className="w-4 h-4 mr-2" /> Weekly
                   </TabsTrigger>
-                  <TabsTrigger value="monthly" className="font-display" data-testid="tab-monthly">
+                  <TabsTrigger
+                    value="monthly"
+                    className="font-display"
+                    data-testid="tab-monthly"
+                    disabled={!activeLeaderboards.some((lb: any) => lb.periodType === "monthly" && (!selectedCasino || lb.casinoId === selectedCasino.id))}
+                  >
                     <TrendingUp className="w-4 h-4 mr-2" /> Monthly
                   </TabsTrigger>
-                  <TabsTrigger value="allTime" className="font-display" data-testid="tab-alltime">
-                    <Trophy className="w-4 h-4 mr-2" /> All Time
+                  <TabsTrigger
+                    value="biweekly"
+                    className="font-display"
+                    data-testid="tab-biweekly"
+                    disabled={!activeLeaderboards.some((lb: any) => lb.periodType === "biweekly" && (!selectedCasino || lb.casinoId === selectedCasino.id))}
+                  >
+                    <Trophy className="w-4 h-4 mr-2" /> Bi-weekly
                   </TabsTrigger>
                 </TabsList>
 
-                {["weekly", "monthly", "allTime"].map((tab) => (
+                {["weekly", "monthly", "biweekly"].map((tab) => (
                   <TabsContent key={tab} value={tab}>
                     <Card className="glass overflow-hidden" data-testid={`card-leaderboard-${tab}`}>
                       {loadingLeaderboard ? (
@@ -243,7 +322,11 @@ export default function Leaderboard() {
                             <Button 
                               className="mt-4 font-display"
                               style={{ backgroundColor: selectedCasino.color }}
-                              onClick={() => window.open(selectedCasino.affiliateLink, "_blank")}
+                              onClick={() => {
+                                const url = normalizeExternalUrl((selectedCasino as any)?.affiliateLink);
+                                if (!url) return;
+                                window.open(url, "_blank", "noopener,noreferrer");
+                              }}
                             >
                               Sign Up at {selectedCasino.name}
                             </Button>
@@ -275,7 +358,9 @@ export default function Leaderboard() {
                               </div>
                               <div className="hidden md:flex col-span-1 items-center">
                                 <span className={`text-sm font-semibold ${getChangeColor(player.change)}`}>
-                                  {player.change === "0" ? "-" : player.change}
+                                  {player.change
+                                    ? (player.change === "0" ? "—" : player.change)
+                                    : "—"}
                                 </span>
                               </div>
                               <div className="col-span-6 md:col-span-4 flex items-center gap-3">
@@ -307,7 +392,7 @@ export default function Leaderboard() {
                                   player.rank === 1 ? "text-neon-gold text-glow-gold" : 
                                   player.rank <= 3 ? "text-neon-purple" : "text-white"
                                 }`}>
-                                  {player.prize}
+                                  {player.prize || "—"}
                                 </span>
                               </div>
                             </motion.div>
@@ -341,6 +426,7 @@ export default function Leaderboard() {
           )}
         </div>
       </div>
+      <Footer />
     </div>
   );
 }

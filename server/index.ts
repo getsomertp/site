@@ -10,12 +10,28 @@ import { startLeaderboardJobs } from "./leaderboardJobs";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { setupAuth } from "./auth";
+import * as Sentry from "@sentry/node";
 
 const app = express();
 const httpServer = createServer(app);
 
+
+// Optional Sentry (backend). If SENTRY_DSN is not set, this is a no-op.
+const sentryEnabled = Boolean(process.env.SENTRY_DSN);
+if (sentryEnabled) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || "development",
+    tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE || 0),
+  });
+}
+
+
 // Behind reverse proxies (Railway, etc.) we must trust proxy for secure cookies.
 app.set("trust proxy", 1);
+
+// Reduce fingerprinting / minor hardening
+app.disable("x-powered-by");
 
 declare module "http" {
   interface IncomingMessage {
@@ -43,6 +59,15 @@ const pgPool = process.env.DATABASE_URL
   : null;
 
 async function ensureSessionTable(pool: pg.Pool) {
+  // Some parts of the schema use gen_random_uuid() (pgcrypto). We try to enable it
+  // automatically so first-time deploys don"t break Discord login / user creation.
+  try {
+    await pool.query('CREATE EXTENSION IF NOT EXISTS "pgcrypto";');
+    log("✅ pgcrypto extension ready", "db");
+  } catch (err) {
+    console.error("⚠️ Failed to ensure pgcrypto extension", err);
+  }
+
   // connect-pg-simple expects a table named "session"
   await pool.query(`
     CREATE TABLE IF NOT EXISTS "session" (
@@ -74,6 +99,30 @@ async function ensureSessionTable(pool: pg.Pool) {
 // Admin/login and most APIs send JSON.
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: false }));
+
+// Basic security headers
+// Note: We intentionally do NOT enable a strict CSP here because the UI loads
+// external images (e.g., Discord avatars) and embeds partner links.
+app.use(
+  helmet({
+    contentSecurityPolicy: false,
+  }),
+);
+
+// General API rate limit (separate from the stricter admin login limiter)
+app.use(
+  "/api",
+  rateLimit({
+    windowMs: 10 * 60_000, // 10 minutes
+    limit: 600, // generous for normal usage; protects against obvious abuse
+    standardHeaders: true,
+    legacyHeaders: false,
+  }),
+);
+
+// Simple health checks for Railway / load balancers
+app.get("/health", (_req, res) => res.status(200).json({ ok: true }));
+app.get("/api/health", (_req, res) => res.status(200).json({ ok: true }));
 
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
@@ -121,6 +170,7 @@ if (pgPool) {
     store = new PgSessionStore({
       pool: pgPool,
       tableName: "session",
+      createTableIfMissing: true,
     });
   } catch (err) {
     console.error("⚠️ Failed to initialize session table/store; falling back to in-memory sessions.", err);
@@ -130,12 +180,18 @@ if (pgPool) {
 
 app.use(
   session({
+    // When behind a proxy (Railway), this helps secure cookies behave correctly
+    // (Together with app.set('trust proxy', 1) above.)
+    proxy: true,
     secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
     store,
     cookie: {
-      secure: process.env.NODE_ENV === "production",
+      // Use "auto" in production so cookies still set correctly when HTTPS
+      // terminates at the proxy (Railway) and the app sees proxied traffic.
+      // Type cast is needed because TS types are boolean-only.
+      secure: (process.env.NODE_ENV === "production" ? ("auto" as any) : false),
       httpOnly: true,
       sameSite: "lax",
       maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
@@ -153,9 +209,13 @@ app.use(
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
+
+    if (sentryEnabled) {
+      Sentry.captureException(err);
+    }
     const message = err.message || "Internal Server Error";
 
-    res.status(status).json({ message });
+    res.status(status).json({ error: message });
     // Never throw after responding; log instead.
     console.error(err);
   });

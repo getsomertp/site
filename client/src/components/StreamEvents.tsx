@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Play, Lock, Swords, Target, DollarSign, Check, X, Crown, User } from "lucide-react";
+import { Plus, Trash2, Play, Lock, Swords, Target, DollarSign, Check, X, Crown, User, Search, Download } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,6 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { downloadCsv } from "@/lib/csv";
 import type { StreamEvent, StreamEventEntry, TournamentBracket } from "@shared/schema";
 
 type AdminFetch = (url: string, options?: RequestInit) => Promise<any>;
@@ -33,6 +34,10 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
   const [payoutEntryId, setPayoutEntryId] = useState<number | null>(null);
   const [payoutAmount, setPayoutAmount] = useState("");
 
+  // Pro pass: quick filters + export
+  const [eventSearch, setEventSearch] = useState("");
+  const [eventStatusFilter, setEventStatusFilter] = useState<"all" | "draft" | "open" | "locked" | "in_progress" | "finished">("all");
+
   const [newEventForm, setNewEventForm] = useState({
     title: "",
     maxPlayers: 8,
@@ -50,20 +55,72 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
     queryFn: () => adminFetch("/api/admin/stream-events"),
   });
 
-  const filteredEvents = events.filter((e) => e.type === activeGame);
+  const filteredEvents = events
+    .filter((e) => e.type === activeGame)
+    .filter((e) => (eventStatusFilter === "all" ? true : e.status === eventStatusFilter))
+    .filter((e) => {
+      const q = eventSearch.trim().toLowerCase();
+      if (!q) return true;
+      return String(e.title || "").toLowerCase().includes(q) || String(e.id).includes(q);
+    })
+    .slice()
+    .sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
   const selectedEvent = events.find((e) => e.id === selectedEventId);
+
+  const exportEntriesCsv = (event: StreamEventWithDetails) => {
+    const rows = (event.entries || []).map((e: any) => ({
+      eventId: event.id,
+      eventTitle: event.title,
+      eventType: event.type,
+      eventStatus: event.status,
+      entryId: e.id,
+      userId: e.userId || "",
+      displayName: e.displayName,
+      slotChoice: e.slotChoice,
+      category: e.category || "",
+      status: e.status,
+      seed: e.seed ?? "",
+      payout: e.payout ?? "",
+      createdAt: e.createdAt ? new Date(e.createdAt as any).toISOString() : "",
+    }));
+
+    downloadCsv(
+      `stream-event-${event.id}-entries.csv`,
+      rows,
+      [
+        "eventId",
+        "eventTitle",
+        "eventType",
+        "eventStatus",
+        "entryId",
+        "userId",
+        "displayName",
+        "slotChoice",
+        "category",
+        "status",
+        "seed",
+        "payout",
+        "createdAt",
+      ],
+    );
+  };
 
   const createEvent = useMutation({
     mutationFn: async (type: string) => {
+      const title = (newEventForm.title || "").trim();
+      if (!title) throw new Error("Title is required");
       const data: any = {
         type,
-        title: newEventForm.title,
+        title,
         status: "draft",
       };
       if (type === "tournament") {
+        if (!newEventForm.maxPlayers || newEventForm.maxPlayers < 2) throw new Error("Number of players must be at least 2");
         data.maxPlayers = newEventForm.maxPlayers;
       } else if (type === "bonus_hunt") {
-        data.startingBalance = newEventForm.startingBalance;
+        const startingBalance = String(newEventForm.startingBalance || "").trim();
+        if (!startingBalance) throw new Error("Starting balance is required");
+        data.startingBalance = startingBalance;
       }
       return adminFetch("/api/admin/stream-events", {
         method: "POST",
@@ -77,8 +134,8 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
       setSelectedEventId(newEvent.id);
       toast({ title: "Event created!" });
     },
-    onError: () => {
-      toast({ title: "Failed to create event", variant: "destructive" });
+    onError: (err: any) => {
+      toast({ title: "Failed to create event", description: err?.message || "Request failed", variant: "destructive" });
     },
   });
 
@@ -141,9 +198,13 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
 
   const addEntry = useMutation({
     mutationFn: async (eventId: number) => {
+      const displayName = String(newEntryForm.displayName || "").trim();
+      const slotChoice = String(newEntryForm.slotChoice || "").trim();
+      if (!displayName) throw new Error("Display name is required");
+      if (!slotChoice) throw new Error("Slot is required");
       return adminFetch(`/api/admin/stream-events/${eventId}/entries`, {
         method: "POST",
-        body: JSON.stringify(newEntryForm),
+        body: JSON.stringify({ ...newEntryForm, displayName, slotChoice }),
       });
     },
     onSuccess: () => {
@@ -526,6 +587,33 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
                   </DialogContent>
                 </Dialog>
               </div>
+
+              <div className="flex flex-col gap-2 mb-3">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    value={eventSearch}
+                    onChange={(e) => setEventSearch(e.target.value)}
+                    placeholder="Search events (title, id)"
+                    className="pl-10 bg-white/5"
+                    data-testid="input-stream-event-search"
+                  />
+                </div>
+                <Select value={eventStatusFilter} onValueChange={(v: any) => setEventStatusFilter(v)}>
+                  <SelectTrigger className="bg-white/5" data-testid="select-stream-event-status">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    <SelectItem value="draft">Draft</SelectItem>
+                    <SelectItem value="open">Open</SelectItem>
+                    <SelectItem value="locked">Locked</SelectItem>
+                    <SelectItem value="in_progress">In progress</SelectItem>
+                    <SelectItem value="finished">Finished</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="space-y-2">
                 {filteredEvents.map((event) => (
                   <Card
@@ -565,6 +653,15 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
                       </div>
                     </div>
                     <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => exportEntriesCsv(selectedEvent)}
+                        disabled={(selectedEvent.entries?.length || 0) === 0}
+                        data-testid="button-export-stream-event-entries-csv"
+                        title={(selectedEvent.entries?.length || 0) === 0 ? "No entries to export" : "Download entries as CSV"}
+                      >
+                        <Download className="w-4 h-4 mr-2" /> Export CSV
+                      </Button>
                       {selectedEvent.status === "draft" && (
                         <Button
                           className="bg-green-600 hover:bg-green-700"
@@ -775,6 +872,32 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
                   </DialogContent>
                 </Dialog>
               </div>
+              <div className="flex flex-col gap-2 mb-3">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    value={eventSearch}
+                    onChange={(e) => setEventSearch(e.target.value)}
+                    placeholder="Search events (title, id)"
+                    className="pl-10 bg-white/5"
+                    data-testid="input-stream-event-search"
+                  />
+                </div>
+                <Select value={eventStatusFilter} onValueChange={(v: any) => setEventStatusFilter(v)}>
+                  <SelectTrigger className="bg-white/5" data-testid="select-stream-event-status">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All statuses</SelectItem>
+                    <SelectItem value="draft">Draft</SelectItem>
+                    <SelectItem value="open">Open</SelectItem>
+                    <SelectItem value="locked">Locked</SelectItem>
+                    <SelectItem value="in_progress">In progress</SelectItem>
+                    <SelectItem value="finished">Finished</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="space-y-2">
                 {filteredEvents.map((event) => (
                   <Card
@@ -814,6 +937,15 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
                       </div>
                     </div>
                     <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => exportEntriesCsv(selectedEvent)}
+                        disabled={(selectedEvent.entries?.length || 0) === 0}
+                        data-testid="button-export-stream-event-entries-csv"
+                        title={(selectedEvent.entries?.length || 0) === 0 ? "No entries to export" : "Download entries as CSV"}
+                      >
+                        <Download className="w-4 h-4 mr-2" /> Export CSV
+                      </Button>
                       {selectedEvent.status === "draft" && (
                         <Button
                           className="bg-green-600 hover:bg-green-700"

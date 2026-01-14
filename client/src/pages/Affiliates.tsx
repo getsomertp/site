@@ -5,7 +5,9 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Navigation } from "@/components/Navigation";
+import { Footer } from "@/components/Footer";
 import { useToast } from "@/hooks/use-toast";
+import { normalizeExternalUrl } from "@/lib/url";
 import type { Casino } from "@shared/schema";
 
 const benefits = [
@@ -120,7 +122,9 @@ export default function Affiliates() {
           ) : (
             <div className="space-y-6">
               {casinos.map((casino, i) => {
-                const styles = getTierStyles(casino.tier);
+                const tier = (casino.tier || "none") as string;
+                const styles = getTierStyles(tier);
+                const tierLabel = tier === "none" ? "Partner" : `${tier.charAt(0).toUpperCase()}${tier.slice(1)} Partner`;
                 return (
                   <motion.div
                     key={casino.id}
@@ -138,7 +142,15 @@ export default function Affiliates() {
                             className={`w-16 h-16 md:w-20 md:h-20 rounded-2xl flex items-center justify-center font-display font-bold text-2xl ${styles.logo}`}
                             style={casino.color ? { backgroundColor: casino.color } : undefined}
                           >
-                            {casino.logo || casino.name.slice(0, 2)}
+                            {casino.logo ? (
+                              <img
+                                src={casino.logo}
+                                alt={casino.name}
+                                className="w-full h-full object-contain rounded-2xl bg-white/5"
+                              />
+                            ) : (
+                              casino.name.slice(0, 2)
+                            )}
                           </div>
                           <div>
                             <div className="flex items-center gap-2 mb-1">
@@ -146,7 +158,7 @@ export default function Affiliates() {
                               {casino.tier === "platinum" && <Star className="w-5 h-5 text-neon-gold fill-neon-gold" />}
                             </div>
                             <Badge className={styles.badge}>
-                              {casino.tier.charAt(0).toUpperCase() + casino.tier.slice(1)} Partner
+                              {tierLabel}
                             </Badge>
                           </div>
                         </div>
@@ -181,7 +193,11 @@ export default function Affiliates() {
                                 ? "bg-gradient-to-r from-neon-gold to-amber-500 text-black hover:opacity-90" 
                                 : "bg-neon-purple hover:bg-neon-purple/80"
                             }`}
-                            onClick={() => window.open(casino.affiliateLink, "_blank")}
+                            onClick={() => {
+                              const url = normalizeExternalUrl((casino as any)?.affiliateLink);
+                              if (!url) return;
+                              window.open(url, "_blank", "noopener,noreferrer");
+                            }}
                             data-testid={`button-visit-${casino.slug}`}
                           >
                             Visit Site <ExternalLink className="ml-2 w-4 h-4" />
@@ -236,16 +252,9 @@ export default function Affiliates() {
             </Card>
           </motion.div>
 
-          <div className="mt-16 text-center text-sm text-muted-foreground">
-            <p className="mb-2">
-              18+ Only. Gambling can be addictive. Please play responsibly.
-            </p>
-            <p>
-              GETSOME may receive compensation from affiliate partners. Always check local laws before gambling.
-            </p>
-          </div>
         </div>
       </div>
+      <Footer />
     </div>
   );
 }

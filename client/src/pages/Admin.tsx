@@ -1,7 +1,31 @@
+
+async function uploadCasinoLogo(file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("logo", file);
+  const res = await fetch("/api/admin/uploads/casino-logo", {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    // Try JSON first, fall back to raw text
+    try {
+      const j = JSON.parse(txt);
+      throw new Error(j?.error || j?.message || "Upload failed");
+    } catch {
+      throw new Error(txt || "Upload failed");
+    }
+  }
+  const data = await res.json();
+  if (!data?.url) throw new Error("Upload failed: missing url");
+  return data.url as string;
+}
+
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Settings, Plus, Trash2, Edit, Save, X, ExternalLink, Trophy, Gift, Lock, Users, Search, DollarSign, Wallet, Image, Tv, LogIn, LogOut } from "lucide-react";
+import { Settings, Plus, Trash2, Edit, Save, X, ExternalLink, Trophy, Gift, Lock, Users, Search, DollarSign, Wallet, Image, Tv, LogIn, LogOut, Download, ScrollText, BadgeCheck } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,9 +36,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Navigation } from "@/components/Navigation";
+import { Footer } from "@/components/Footer";
 import { StreamEvents } from "@/components/StreamEvents";
 import { useToast } from "@/hooks/use-toast";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { downloadCsv } from "@/lib/csv";
 import type { Casino, Giveaway, GiveawayRequirement, User, UserPayment, UserCasinoAccount, UserWallet } from "@shared/schema";
 
 // IMPORTANT: Don't import the Drizzle schema module (shared/schema.ts) into the browser bundle.
@@ -85,6 +111,7 @@ type CasinoFormData = {
   description: string;
   leaderboardApiUrl: string;
   leaderboardApiKey: string;
+  logo: string;
   features: string;
   sortOrder: number;
   isActive: boolean;
@@ -102,6 +129,7 @@ const defaultCasinoForm: CasinoFormData = {
   description: "",
   leaderboardApiUrl: "",
   leaderboardApiKey: "",
+  logo: "",
   features: "",
   sortOrder: 0,
   isActive: true,
@@ -128,6 +156,42 @@ const defaultGiveawayForm: GiveawayFormData = {
   endsAt: "",
   isActive: true,
 };
+
+type WinnerSummary = {
+  id: string;
+  discordUsername?: string | null;
+  discordAvatar?: string | null;
+  discordAvatarUrl?: string | null;
+  kickUsername?: string | null;
+  kickVerified?: boolean | null;
+};
+
+type GiveawayAdmin = Giveaway & {
+  entries: number;
+  requirements: GiveawayRequirement[];
+  winner?: WinnerSummary | null;
+};
+
+type AdminAuditLog = {
+  id: number;
+  action: string;
+  entityType?: string | null;
+  entityId?: string | null;
+  details?: string | null;
+  ip?: string | null;
+  userAgent?: string | null;
+  createdAt?: string | null;
+};
+
+
+type GiveawayEntryAdmin = {
+  id: number;
+  giveawayId: number;
+  userId: string;
+  createdAt: string | Date | null;
+  user: WinnerSummary | null;
+};
+
 
 function AdminLogin({ onLogin }: { onLogin: () => void }) {
   const [password, setPassword] = useState("");
@@ -218,6 +282,18 @@ export default function Admin() {
   const [editingGiveaway, setEditingGiveaway] = useState<Giveaway | null>(null);
   const [casinoForm, setCasinoForm] = useState<CasinoFormData>(defaultCasinoForm);
   const [giveawayForm, setGiveawayForm] = useState<GiveawayFormData>(defaultGiveawayForm);
+  const [giveawayListMode, setGiveawayListMode] = useState<"all" | "active" | "ended">("all");
+  const [entriesDialogOpen, setEntriesDialogOpen] = useState(false);
+  const [selectedGiveawayForEntries, setSelectedGiveawayForEntries] = useState<GiveawayAdmin | null>(null);
+
+  // Quick filters / search (pro pass)
+  const [casinoSearch, setCasinoSearch] = useState("");
+  const [casinoStatusFilter, setCasinoStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [casinoApiFilter, setCasinoApiFilter] = useState<"all" | "configured" | "not_configured">("all");
+  const [giveawaySearch, setGiveawaySearch] = useState("");
+  const [giveawayWinnerFilter, setGiveawayWinnerFilter] = useState<"all" | "with_winner" | "no_winner">("all");
+
+const [auditSearch, setAuditSearch] = useState("");
 
   // Site settings
   const [siteKickUrl, setSiteKickUrl] = useState("https://kick.com/get-some");
@@ -264,6 +340,14 @@ export default function Admin() {
     enabled: isAuthenticated === true,
   });
 
+// Admin audit log
+const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAuditLog[]>({
+  queryKey: ["/api/admin/audit", auditSearch],
+  queryFn: () => adminFetch(`/api/admin/audit?q=${encodeURIComponent(auditSearch)}`),
+  enabled: isAuthenticated === true,
+});
+
+
   useEffect(() => {
     if (siteSettings?.kickUrl) setSiteKickUrl(siteSettings.kickUrl);
     if (siteSettings?.discordUrl) setSiteDiscordUrl(siteSettings.discordUrl);
@@ -277,21 +361,36 @@ export default function Admin() {
   });
 
   // Fetch giveaways  
-  const { data: giveaways = [], isLoading: loadingGiveaways } = useQuery<(Giveaway & { entries: number; requirements: GiveawayRequirement[] })[]>({
-    queryKey: ["/api/giveaways"],
-    // IMPORTANT: react-query requires a queryFn. Without it, the Admin page can throw at runtime
-    // and appear to have "no admin features" even though authentication worked.
+  const { data: giveaways = [], isLoading: loadingGiveaways } = useQuery<GiveawayAdmin[]>({
+    queryKey: ["/api/admin/giveaways"],
     queryFn: () => adminFetch("/api/admin/giveaways"),
     enabled: isAuthenticated === true,
   });
 
+  const { data: giveawayEntries = [], isLoading: loadingGiveawayEntries } = useQuery<GiveawayEntryAdmin[]>({
+    queryKey: [selectedGiveawayForEntries ? `/api/admin/giveaways/${selectedGiveawayForEntries.id}/entries` : "/api/admin/giveaways/0/entries"],
+    queryFn: () => adminFetch(`/api/admin/giveaways/${selectedGiveawayForEntries!.id}/entries`),
+    enabled: isAuthenticated === true && entriesDialogOpen && !!selectedGiveawayForEntries?.id,
+  });
+
+
   // Casino mutations
   const createCasino = useMutation({
     mutationFn: async (data: CasinoFormData) => {
+      const name = (data.name || "").trim();
+      if (!name) throw new Error("Casino name is required");
+      const rawSlug = (data.slug || "").trim();
+      if (!rawSlug) throw new Error("Slug is required");
+      const slug = rawSlug
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      if (!slug) throw new Error("Slug must contain letters or numbers");
+
       const features = data.features.split(",").map(f => f.trim()).filter(Boolean);
       return adminFetch("/api/admin/casinos", {
         method: "POST",
-        body: JSON.stringify({ ...data, features }),
+        body: JSON.stringify({ ...data, name, slug, features }),
       });
     },
     onSuccess: () => {
@@ -309,9 +408,19 @@ export default function Admin() {
   const updateCasino = useMutation({
     mutationFn: async ({ id, data }: { id: number; data: Partial<CasinoFormData> }) => {
       const features = data.features?.split(",").map(f => f.trim()).filter(Boolean);
+      const payload: any = { ...data, ...(features ? { features } : {}) };
+      if (typeof data.name === "string") payload.name = data.name.trim();
+      if (typeof data.slug === "string") {
+        const slug = data.slug
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9-]+/g, "-")
+          .replace(/^-+|-+$/g, "");
+        payload.slug = slug;
+      }
       return adminFetch(`/api/admin/casinos/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ ...data, features }),
+        body: JSON.stringify(payload),
       });
     },
     onSuccess: () => {
@@ -440,28 +549,36 @@ const deleteLeaderboard = useMutation({
   // Giveaway mutations
   const createGiveaway = useMutation({
     mutationFn: async (data: GiveawayFormData) => {
-      const { requirements, ...rest } = data;
+      // Client-side validation (prevents confusing "title: Required" / "endsAt" errors)
+      if (!data.title?.trim()) throw new Error("Title is required");
+      if (!data.prize?.trim()) throw new Error("Prize is required");
+      if (!data.endsAt?.trim()) throw new Error("Ends At is required");
+
+      const cleanRequirements = (data.requirements || [])
+        .filter((r) => r && r.type && r.type !== "none")
+        .map((r) => ({
+          type: r.type,
+          casinoId: r.casinoId ?? null,
+          value: r.value ? String(r.value) : null,
+        }));
+
       return adminFetch("/api/admin/giveaways", {
         method: "POST",
-        body: JSON.stringify({ 
-          ...(data.casinoId !== undefined ? { casinoId: data.casinoId } : {}),
-          ...(data.name !== undefined ? { name: data.name } : {}),
-          ...(data.periodType !== undefined ? { periodType: data.periodType } : {}),
-          ...(data.durationDays !== undefined ? { durationDays: data.durationDays } : {}),
-          ...(data.refreshIntervalSec !== undefined ? { refreshIntervalSec: data.refreshIntervalSec } : {}),
-          ...(data.startsAt !== undefined ? { startAt: new Date(data.startsAt) } : {}),
-          ...(data.endsAt !== undefined ? { endAt: new Date(data.endsAt) } : {}),
-          ...(data.apiUrl !== undefined ? { apiEndpoint: data.apiUrl } : {}),
-          ...(data.apiMethod !== undefined ? { apiMethod: data.apiMethod } : {}),
-          ...(data.apiHeadersJson !== undefined ? { apiHeadersJson: data.apiHeadersJson } : {}),
-          ...(data.apiBodyJson !== undefined ? { apiBodyJson: data.apiBodyJson } : {}),
-          ...(data.mappingJson !== undefined ? { apiMappingJson: data.mappingJson } : {}),
-          ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+        body: JSON.stringify({
+          title: data.title,
+          description: data.description || null,
+          prize: data.prize,
+          maxEntries: data.maxEntries ?? null,
+          casinoId: data.casinoId ?? null,
+          endsAt: new Date(data.endsAt),
+          isActive: data.isActive,
+          requirements: cleanRequirements,
         }),
       });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/giveaways"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/giveaways"] });
       setGiveawayDialogOpen(false);
       setGiveawayForm(defaultGiveawayForm);
       toast({ title: "Giveaway created successfully" });
@@ -485,6 +602,7 @@ const deleteLeaderboard = useMutation({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/giveaways"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/giveaways"] });
       setGiveawayDialogOpen(false);
       setEditingGiveaway(null);
       setGiveawayForm(defaultGiveawayForm);
@@ -501,12 +619,35 @@ const deleteLeaderboard = useMutation({
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/giveaways"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/giveaways"] });
       toast({ title: "Giveaway deleted successfully" });
     },
     onError: (err: any) => {
       toast({ title: "Failed to delete giveaway", description: err?.message || "Request failed", variant: "destructive" });
     },
   });
+
+  const pickGiveawayWinner = useMutation({
+    mutationFn: async (giveawayId: number) => {
+      return adminFetch(`/api/admin/giveaways/${giveawayId}/pick-winner`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      });
+    },
+    onSuccess: (data: any) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/giveaways"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/giveaways"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/giveaways/active"] });
+      if (selectedGiveawayForEntries?.id) {
+        queryClient.invalidateQueries({ queryKey: [`/api/admin/giveaways/${selectedGiveawayForEntries.id}/entries`] });
+      }
+      toast({ title: "Winner selected" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to pick winner", description: err?.message || "Request failed", variant: "destructive" });
+    },
+  });
+
   
   const handleLogout = async () => {
     await fetch("/api/admin/logout", { method: "POST", credentials: "include" });
@@ -539,6 +680,7 @@ const deleteLeaderboard = useMutation({
       description: casino.description || "",
       leaderboardApiUrl: casino.leaderboardApiUrl || "",
       leaderboardApiKey: casino.leaderboardApiKey || "",
+      logo: casino.logo || "",
       features: casino.features?.join(", ") || "",
       sortOrder: casino.sortOrder,
       isActive: casino.isActive,
@@ -564,6 +706,46 @@ const deleteLeaderboard = useMutation({
     });
     setGiveawayDialogOpen(true);
   };
+
+  const adminGiveawaysFiltered = (() => {
+    const now = new Date();
+    return (giveaways || []).filter((g: any) => {
+      const active = Boolean(g?.isActive) && new Date(g.endsAt) > now;
+      if (giveawayListMode === "active") return active;
+      if (giveawayListMode === "ended") return !active;
+      return true;
+    });
+  })();
+
+  const adminCasinosFiltered = (() => {
+    const q = casinoSearch.trim().toLowerCase();
+    return (casinos || []).filter((c) => {
+      if (casinoStatusFilter === "active" && !c.isActive) return false;
+      if (casinoStatusFilter === "inactive" && c.isActive) return false;
+      const apiConfigured = Boolean((c as any).leaderboardApiUrl);
+      if (casinoApiFilter === "configured" && !apiConfigured) return false;
+      if (casinoApiFilter === "not_configured" && apiConfigured) return false;
+      if (!q) return true;
+      return (
+        (c.name || "").toLowerCase().includes(q) ||
+        (c.slug || "").toLowerCase().includes(q) ||
+        (c.affiliateCode || "").toLowerCase().includes(q)
+      );
+    });
+  })();
+
+  const adminGiveawaysSearchFiltered = (() => {
+    const q = giveawaySearch.trim().toLowerCase();
+    return (adminGiveawaysFiltered || []).filter((g: any) => {
+      if (giveawayWinnerFilter === "with_winner" && !g.winnerId) return false;
+      if (giveawayWinnerFilter === "no_winner" && g.winnerId) return false;
+      if (!q) return true;
+      return (
+        String(g.title || "").toLowerCase().includes(q) ||
+        String(g.prize || "").toLowerCase().includes(q)
+      );
+    });
+  })();
 
   return (
     <div className="min-h-screen">
@@ -598,7 +780,7 @@ const deleteLeaderboard = useMutation({
           </motion.div>
 
           <Tabs defaultValue="casinos" className="w-full">
-            <TabsList className="grid w-full grid-cols-6 mb-8 bg-card/50">
+            <TabsList className="grid w-full grid-cols-4 md:grid-cols-8 mb-8 bg-card/50">
               <TabsTrigger value="casinos" className="font-display" data-testid="admin-tab-casinos">
                 <Trophy className="w-4 h-4 mr-2" /> Casinos
               </TabsTrigger>
@@ -607,6 +789,9 @@ const deleteLeaderboard = useMutation({
               </TabsTrigger>
               <TabsTrigger value="players" className="font-display" data-testid="admin-tab-players">
                 <Users className="w-4 h-4 mr-2" /> Players
+              </TabsTrigger>
+              <TabsTrigger value="verifications" className="font-display" data-testid="admin-tab-verifications">
+                <BadgeCheck className="w-4 h-4 mr-2" /> Verifications
               </TabsTrigger>
               <TabsTrigger value="stream-events" className="font-display" data-testid="admin-tab-stream-events">
                 <Tv className="w-4 h-4 mr-2" /> Stream Events
@@ -617,7 +802,11 @@ const deleteLeaderboard = useMutation({
               <TabsTrigger value="site" className="font-display" data-testid="admin-tab-site">
                 <Settings className="w-4 h-4 mr-2" /> Site
               </TabsTrigger>
-            </TabsList>
+            
+<TabsTrigger value="audit" className="font-display" data-testid="admin-tab-audit">
+  <ScrollText className="w-4 h-4 mr-2" /> Audit
+</TabsTrigger>
+</TabsList>
 
             <TabsContent value="casinos">
               <div className="flex justify-between items-center mb-6">
@@ -660,9 +849,50 @@ const deleteLeaderboard = useMutation({
                           className="bg-white/5"
                           data-testid="input-casino-slug"
                         />
+                      
+</div>
+                      <div>
+                        <Label>Casino Logo</Label>
+                        <div className="flex items-center gap-3">
+                          {casinoForm.logo ? (
+                            <img src={casinoForm.logo} alt="Casino logo" className="w-12 h-12 rounded-xl object-cover border border-white/10" />
+                          ) : (
+                            <div className="w-12 h-12 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-white font-semibold">
+                              {(casinoForm.name || "").slice(0, 2).toUpperCase()}
+                            </div>
+                          )}
+                          <div className="flex-1 space-y-2">
+                            <Input
+                              value={casinoForm.logo}
+                              onChange={(e) => setCasinoForm({ ...casinoForm, logo: e.target.value })}
+                              placeholder="https://.../logo.png (optional)"
+                              className="bg-white/5"
+                              data-testid="input-casino-logo"
+                            />
+                            <Input
+                              type="file"
+                              accept="image/*"
+                              className="bg-white/5"
+                              onChange={async (e) => {
+                                const file = e.target.files?.[0];
+                                if (!file) return;
+                                try {
+                                  const url = await uploadCasinoLogo(file);
+                                  setCasinoForm({ ...casinoForm, logo: url });
+                                } catch (err: any) {
+                                  toast({ title: "Logo upload failed", description: err?.message || String(err), variant: "destructive" });
+                                } finally {
+                                  e.currentTarget.value = "";
+                                }
+                              }}
+                            />
+                            <div className="text-xs text-muted-foreground">Uploads to S3/R2 when configured. Falls back to local uploads if not.</div>
+                          </div>
+                        </div>
                       </div>
                       <div>
                         <Label>Affiliate Code</Label>
+
                         <Input 
                           value={casinoForm.affiliateCode}
                           onChange={(e) => setCasinoForm({ ...casinoForm, affiliateCode: e.target.value })}
@@ -808,9 +1038,44 @@ const deleteLeaderboard = useMutation({
                 </Dialog>
               </div>
 
+              <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center mb-6">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    value={casinoSearch}
+                    onChange={(e) => setCasinoSearch(e.target.value)}
+                    placeholder="Search casinos (name, slug, code)"
+                    className="pl-10 bg-white/5"
+                    data-testid="input-casino-search"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Select value={casinoStatusFilter} onValueChange={(v: any) => setCasinoStatusFilter(v)}>
+                    <SelectTrigger className="bg-white/5 w-[150px]" data-testid="select-casino-status">
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="active">Active</SelectItem>
+                      <SelectItem value="inactive">Inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={casinoApiFilter} onValueChange={(v: any) => setCasinoApiFilter(v)}>
+                    <SelectTrigger className="bg-white/5 w-[180px]" data-testid="select-casino-api">
+                      <SelectValue placeholder="API" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All APIs</SelectItem>
+                      <SelectItem value="configured">API configured</SelectItem>
+                      <SelectItem value="not_configured">No API</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
               {loadingCasinos ? (
                 <div className="text-center py-12 text-muted-foreground">Loading casinos...</div>
-              ) : casinos.length === 0 ? (
+              ) : (casinos || []).length === 0 ? (
                 <Card className="glass p-12 text-center">
                   <Trophy className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
                   <h3 className="font-display text-xl text-white mb-2">No Casinos Yet</h3>
@@ -819,17 +1084,31 @@ const deleteLeaderboard = useMutation({
                     <Plus className="w-4 h-4 mr-2" /> Add Casino
                   </Button>
                 </Card>
+              ) : adminCasinosFiltered.length === 0 ? (
+                <Card className="glass p-12 text-center">
+                  <Search className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="font-display text-xl text-white mb-2">No casinos found</h3>
+                  <p className="text-muted-foreground">Try clearing your filters or searching a different term.</p>
+                </Card>
               ) : (
                 <div className="space-y-4">
-                  {casinos.map((casino) => (
+                  {adminCasinosFiltered.map((casino) => (
                     <Card key={casino.id} className="glass p-6" data-testid={`admin-casino-${casino.id}`}>
                       <div className="flex items-center gap-4">
-                        <div 
-                          className="w-14 h-14 rounded-xl flex items-center justify-center font-display font-bold text-white"
-                          style={{ backgroundColor: casino.color }}
-                        >
-                          {casino.name.slice(0, 2)}
-                        </div>
+                        {casino.logo ? (
+                          <img
+                            src={casino.logo}
+                            alt={`${casino.name} logo`}
+                            className="w-14 h-14 rounded-xl object-cover border border-white/10 bg-white/5"
+                          />
+                        ) : (
+                          <div
+                            className="w-14 h-14 rounded-xl flex items-center justify-center font-display font-bold text-white"
+                            style={{ backgroundColor: casino.color }}
+                          >
+                            {casino.name.slice(0, 2)}
+                          </div>
+                        )}
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
                             <h3 className="font-display font-bold text-white text-lg">{casino.name}</h3>
@@ -1096,9 +1375,61 @@ const deleteLeaderboard = useMutation({
                 </Dialog>
               </div>
 
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant={giveawayListMode === "all" ? "secondary" : "outline"}
+                    size="sm"
+                    onClick={() => setGiveawayListMode("all")}
+                    data-testid="filter-giveaways-all"
+                  >
+                    All
+                  </Button>
+                  <Button
+                    variant={giveawayListMode === "active" ? "secondary" : "outline"}
+                    size="sm"
+                    onClick={() => setGiveawayListMode("active")}
+                    data-testid="filter-giveaways-active"
+                  >
+                    Current
+                  </Button>
+                  <Button
+                    variant={giveawayListMode === "ended" ? "secondary" : "outline"}
+                    size="sm"
+                    onClick={() => setGiveawayListMode("ended")}
+                    data-testid="filter-giveaways-ended"
+                  >
+                    Previous
+                  </Button>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      value={giveawaySearch}
+                      onChange={(e) => setGiveawaySearch(e.target.value)}
+                      placeholder="Search giveaways (title, prize)"
+                      className="pl-10 bg-white/5 w-full sm:w-[280px]"
+                      data-testid="input-giveaway-search"
+                    />
+                  </div>
+                  <Select value={giveawayWinnerFilter} onValueChange={(v: any) => setGiveawayWinnerFilter(v)}>
+                    <SelectTrigger className="bg-white/5 w-full sm:w-[200px]" data-testid="select-giveaway-winner">
+                      <SelectValue placeholder="Winner" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All winners</SelectItem>
+                      <SelectItem value="with_winner">Has winner</SelectItem>
+                      <SelectItem value="no_winner">No winner</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
               {loadingGiveaways ? (
                 <div className="text-center py-12 text-muted-foreground">Loading giveaways...</div>
-              ) : giveaways.length === 0 ? (
+              ) : (giveaways || []).length === 0 ? (
                 <Card className="glass p-12 text-center">
                   <Gift className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
                   <h3 className="font-display text-xl text-white mb-2">No Giveaways Yet</h3>
@@ -1107,10 +1438,25 @@ const deleteLeaderboard = useMutation({
                     <Plus className="w-4 h-4 mr-2" /> Create Giveaway
                   </Button>
                 </Card>
+              ) : adminGiveawaysFiltered.length === 0 ? (
+                <Card className="glass p-12 text-center">
+                  <Gift className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="font-display text-xl text-white mb-2">
+                    No {giveawayListMode === "active" ? "Current" : giveawayListMode === "ended" ? "Previous" : ""} Giveaways
+                  </h3>
+                  <p className="text-muted-foreground">Try a different filter.</p>
+                </Card>
+              ) : adminGiveawaysSearchFiltered.length === 0 ? (
+                <Card className="glass p-12 text-center">
+                  <Search className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="font-display text-xl text-white mb-2">No giveaways found</h3>
+                  <p className="text-muted-foreground">Try clearing your search or winner filter.</p>
+                </Card>
               ) : (
                 <div className="space-y-4">
-                  {giveaways.map((giveaway) => {
+                  {adminGiveawaysSearchFiltered.map((giveaway) => {
                     const isActive = giveaway.isActive && new Date(giveaway.endsAt) > new Date();
+                    const winnerName = giveaway.winner?.discordUsername || giveaway.winner?.kickUsername || "Winner selected";
                     return (
                       <Card key={giveaway.id} className="glass p-6" data-testid={`admin-giveaway-${giveaway.id}`}>
                         <div className="flex items-center gap-4">
@@ -1126,23 +1472,55 @@ const deleteLeaderboard = useMutation({
                                 {isActive ? "Active" : "Ended"}
                               </Badge>
                             </div>
-                            <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
+                            <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground mt-1">
                               <span className="text-neon-gold font-display font-bold">{giveaway.prize}</span>
                               <span>{giveaway.entries || 0} entries</span>
                               <span>Ends: {new Date(giveaway.endsAt).toLocaleDateString()}</span>
+                              {giveaway.winnerId && (
+                                <span className="flex items-center gap-1 text-neon-gold">
+                                  <Trophy className="w-4 h-4" />
+                                  {winnerName}
+                                </span>
+                              )}
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Button 
-                              variant="outline" 
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setSelectedGiveawayForEntries(giveaway);
+                                setEntriesDialogOpen(true);
+                              }}
+                              title="View entries"
+                              data-testid={`button-entries-giveaway-${giveaway.id}`}
+                            >
+                              <Users className="w-4 h-4" />
+                            </Button>
+
+                            {!isActive && !giveaway.winnerId && (giveaway.entries || 0) > 0 && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => pickGiveawayWinner.mutate(giveaway.id)}
+                                disabled={pickGiveawayWinner.isPending}
+                                title="Pick winner"
+                                data-testid={`button-pick-winner-${giveaway.id}`}
+                              >
+                                <Trophy className="w-4 h-4" />
+                              </Button>
+                            )}
+
+                            <Button
+                              variant="outline"
                               size="sm"
                               onClick={() => openEditGiveaway(giveaway)}
                               data-testid={`button-edit-giveaway-${giveaway.id}`}
                             >
                               <Edit className="w-4 h-4" />
                             </Button>
-                            <Button 
-                              variant="destructive" 
+                            <Button
+                              variant="destructive"
                               size="sm"
                               onClick={() => {
                                 if (confirm(`Delete "${giveaway.title}"?`)) {
@@ -1160,6 +1538,150 @@ const deleteLeaderboard = useMutation({
                   })}
                 </div>
               )}
+
+              <Dialog
+                open={entriesDialogOpen}
+                onOpenChange={(open) => {
+                  setEntriesDialogOpen(open);
+                  if (!open) setSelectedGiveawayForEntries(null);
+                }}
+              >
+                <DialogContent className="glass border-white/10 max-w-2xl">
+                  <DialogHeader>
+                    <DialogTitle className="font-display text-xl text-white">
+                      Entries — {selectedGiveawayForEntries?.title || ""}
+                    </DialogTitle>
+                  </DialogHeader>
+
+                  {selectedGiveawayForEntries && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between gap-4">
+                        <p className="text-sm text-muted-foreground">
+                          {(selectedGiveawayForEntries.entries || 0).toLocaleString()} entries
+                        </p>
+
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const g = selectedGiveawayForEntries;
+                              const winnerName = g.winner?.discordUsername || g.winner?.kickUsername || "";
+                              const rows = (giveawayEntries || []).map((e: any) => ({
+                                giveawayId: g.id,
+                                giveawayTitle: g.title,
+                                winnerUserId: g.winnerId || "",
+                                winnerName,
+                                userId: e.userId,
+                                discordUsername: e.user?.discordUsername || "",
+                                kickUsername: e.user?.kickUsername || "",
+                                enteredAt: e.createdAt ? new Date(e.createdAt as any).toISOString() : "",
+                              }));
+
+                              downloadCsv(
+                                `giveaway-${g.id}-entries.csv`,
+                                rows,
+                                [
+                                  "giveawayId",
+                                  "giveawayTitle",
+                                  "winnerUserId",
+                                  "winnerName",
+                                  "userId",
+                                  "discordUsername",
+                                  "kickUsername",
+                                  "enteredAt",
+                                ],
+                              );
+                            }}
+                            disabled={loadingGiveawayEntries || (giveawayEntries?.length || 0) === 0}
+                            data-testid="button-export-giveaway-entries-csv"
+                            title={giveawayEntries.length ? "Download entries as CSV" : "No entries to export"}
+                          >
+                            <Download className="w-4 h-4 mr-2" />
+                            Export CSV
+                          </Button>
+
+                          {(() => {
+                            const ended = !(selectedGiveawayForEntries.isActive && new Date(selectedGiveawayForEntries.endsAt) > new Date());
+                            const canPick = ended && !selectedGiveawayForEntries.winnerId && (selectedGiveawayForEntries.entries || 0) > 0;
+                            if (!canPick) return null;
+                            return (
+                              <Button
+                                size="sm"
+                                onClick={() => pickGiveawayWinner.mutate(selectedGiveawayForEntries.id)}
+                                disabled={pickGiveawayWinner.isPending}
+                                className="font-display"
+                                data-testid="button-pick-winner-modal"
+                              >
+                                <Trophy className="w-4 h-4 mr-2" />
+                                Pick Winner
+                              </Button>
+                            );
+                          })()}
+                        </div>
+                      </div>
+
+                      {selectedGiveawayForEntries.winnerId && (
+                        <Card className="glass p-4">
+                          <div className="flex items-center gap-3">
+                            <Trophy className="w-5 h-5 text-neon-gold" />
+                            <div>
+                              <p className="text-xs text-muted-foreground">Winner</p>
+                              <p className="text-white font-display font-bold">
+                                {selectedGiveawayForEntries.winner?.discordUsername ||
+                                  selectedGiveawayForEntries.winner?.kickUsername ||
+                                  "Winner selected"}
+                              </p>
+                            </div>
+                          </div>
+                        </Card>
+                      )}
+
+                      <Card className="glass p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <p className="text-sm font-display text-white">Entry Log</p>
+                          <p className="text-xs text-muted-foreground">Newest first</p>
+                        </div>
+
+                        {loadingGiveawayEntries ? (
+                          <div className="text-center py-6 text-muted-foreground">Loading entries...</div>
+                        ) : giveawayEntries.length === 0 ? (
+                          <div className="text-center py-6 text-muted-foreground">No entries yet.</div>
+                        ) : (
+                          <ScrollArea className="h-72 pr-4">
+                            <div className="space-y-2">
+                              {giveawayEntries.map((e) => (
+                                <div key={e.id} className="flex items-center justify-between gap-3 p-2 rounded-md bg-white/5">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <div className="w-8 h-8 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white">
+                                      {e.user?.discordAvatarUrl ? (
+                                        <img src={e.user.discordAvatarUrl} alt="" className="w-full h-full object-cover" />
+                                      ) : (
+                                        (e.user?.discordUsername || e.user?.kickUsername || "?")
+                                          .slice(0, 1)
+                                          .toUpperCase()
+                                      )}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <p className="text-white text-sm truncate">
+                                        {e.user?.discordUsername || e.user?.kickUsername || e.userId}
+                                      </p>
+                                      <p className="text-xs text-muted-foreground truncate">{e.userId}</p>
+                                    </div>
+                                  </div>
+                                  <div className="text-xs text-muted-foreground whitespace-nowrap">
+                                    {e.createdAt ? new Date(e.createdAt as any).toLocaleString() : ""}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </ScrollArea>
+                        )}
+                      </Card>
+                    </div>
+                  )}
+                </DialogContent>
+              </Dialog>
             </TabsContent>
 
             <PlayersTab casinos={casinos} />
@@ -1432,12 +1954,82 @@ const deleteLeaderboard = useMutation({
               </Card>
             </TabsContent>
 
+<TabsContent value="audit">
+  <div className="flex flex-col gap-4">
+    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+      <h2 className="font-display text-2xl font-bold text-white">Audit Log</h2>
+      <div className="flex items-center gap-2">
+        <Input
+          placeholder="Search action, entity, ip..."
+          value={auditSearch}
+          onChange={(e) => setAuditSearch(e.target.value)}
+          className="w-full md:w-[320px]"
+        />
+        <Button variant="outline" onClick={() => setAuditSearch("")}>Clear</Button>
+      </div>
+    </div>
+
+    <Card className="bg-card/60 border border-white/10">
+      <CardContent className="pt-6">
+        {loadingAuditLogs ? (
+          <div className="flex items-center justify-center py-10 text-muted-foreground">
+            <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading audit log...
+          </div>
+        ) : auditLogs.length === 0 ? (
+          <div className="text-center py-10 text-muted-foreground">No audit log entries yet.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-muted-foreground border-b border-white/10">
+                  <th className="py-2 pr-4">Time</th>
+                  <th className="py-2 pr-4">Action</th>
+                  <th className="py-2 pr-4">Entity</th>
+                  <th className="py-2 pr-4">IP</th>
+                  <th className="py-2 pr-4">Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {auditLogs.map((row) => (
+                  <tr key={row.id} className="border-b border-white/5">
+                    <td className="py-2 pr-4 whitespace-nowrap">
+                      {row.createdAt ? new Date(row.createdAt).toLocaleString() : "-"}
+                    </td>
+                    <td className="py-2 pr-4 font-medium">{row.action}</td>
+                    <td className="py-2 pr-4">
+                      <span className="text-muted-foreground">{row.entityType || "-"}</span>
+                      {row.entityId ? <span className="ml-2 text-white/90">#{row.entityId}</span> : null}
+                    </td>
+                    <td className="py-2 pr-4 whitespace-nowrap">{row.ip || "-"}</td>
+                    <td className="py-2 pr-4 max-w-[480px]">
+                      <div className="truncate text-white/80">
+                        {row.details ? row.details : "-"}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  </div>
+</TabsContent>
+
+
+
+            <TabsContent value="verifications">
+              <VerificationsTab />
+            </TabsContent>
+
             <TabsContent value="stream-events">
               <StreamEvents adminFetch={adminFetch} />
             </TabsContent>
           </Tabs>
         </div>
       </div>
+      <Footer />
     </div>
   );
 }
@@ -1449,6 +2041,220 @@ type UserFullDetails = {
   payments: UserPayment[];
   totalPayments: string;
 };
+
+type PendingCasinoAccount = UserCasinoAccount & { user: User; casino: Casino };
+type PendingWallet = UserWallet & { user: User; casino: Casino };
+type PendingVerificationsResponse = { casinoAccounts: PendingCasinoAccount[]; wallets: PendingWallet[] };
+
+function discordAvatarUrl(u: any) {
+  if (!u?.discordId || !u?.discordAvatar) return null;
+  return `https://cdn.discordapp.com/avatars/${u.discordId}/${u.discordAvatar}.png`;
+}
+
+function VerificationsTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [q, setQ] = useState("");
+
+  const { data, isLoading, error } = useQuery<PendingVerificationsResponse>({
+    queryKey: ["/api/admin/verifications", q],
+    queryFn: () => adminFetch(`/api/admin/verifications${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  });
+
+  const verifyCasinoAccount = useMutation({
+    mutationFn: async (id: number) => {
+      return adminFetch(`/api/casino-accounts/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ verified: true }),
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Casino account verified" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/verifications"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to verify", description: err?.message || "Try again", variant: "destructive" });
+    },
+  });
+
+  const verifyWallet = useMutation({
+    mutationFn: async (id: number) => {
+      return adminFetch(`/api/wallets/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ verified: true }),
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Wallet verified" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/verifications"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to verify", description: err?.message || "Try again", variant: "destructive" });
+    },
+  });
+
+  const casinoAccounts = data?.casinoAccounts || [];
+  const wallets = data?.wallets || [];
+  const total = casinoAccounts.length + wallets.length;
+
+  return (
+    <div>
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
+        <div>
+          <h2 className="font-display text-2xl font-bold text-white">Verification Queue</h2>
+          <p className="text-muted-foreground">Review pending casino links and wallet proof uploads.</p>
+        </div>
+        <div className="relative w-full md:w-[360px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search user, casino, wallet, or ID..."
+            className="pl-10 bg-white/5"
+            data-testid="input-verification-search"
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="glass p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-display text-lg text-white flex items-center gap-2">
+              <BadgeCheck className="w-5 h-5 text-neon-cyan" /> Pending Casino Accounts
+            </h3>
+            <Badge className={casinoAccounts.length ? "bg-yellow-500/20 text-yellow-300" : "bg-green-500/20 text-green-400"}>
+              {casinoAccounts.length ? `${casinoAccounts.length} pending` : "All clear"}
+            </Badge>
+          </div>
+
+          {isLoading ? (
+            <div className="text-center py-10 text-muted-foreground">Loading...</div>
+          ) : casinoAccounts.length === 0 ? (
+            <div className="text-center py-10 text-muted-foreground">No pending casino accounts.</div>
+          ) : (
+            <ScrollArea className="h-[520px] pr-4">
+              <div className="space-y-3">
+                {casinoAccounts.map((a) => (
+                  <Card key={a.id} className="bg-white/5 p-4" data-testid={`verification-casino-${a.id}`}> 
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white shrink-0">
+                          {discordAvatarUrl(a.user) ? (
+                            <img src={discordAvatarUrl(a.user)!} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            (a.user.discordUsername || a.user.kickUsername || "?").slice(0, 1).toUpperCase()
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-white font-semibold truncate">{a.user.discordUsername || a.user.kickUsername || "Unknown"}</div>
+                          <div className="text-xs text-muted-foreground truncate">{a.user.discordId}</div>
+                          <div className="text-sm text-muted-foreground mt-2">
+                            <span className="text-white font-medium">{a.casino.name}</span> • Username: <span className="text-white">{a.username}</span>
+                          </div>
+                          <div className="text-xs text-muted-foreground font-mono break-all mt-1">OD: {a.odId}</div>
+                          <div className="text-xs text-muted-foreground mt-2">
+                            Submitted: {a.createdAt ? new Date(a.createdAt as any).toLocaleString() : ""}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => verifyCasinoAccount.mutate(a.id)}
+                          disabled={verifyCasinoAccount.isPending}
+                        >
+                          Verify
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </ScrollArea>
+          )}
+        </Card>
+
+        <Card className="glass p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-display text-lg text-white flex items-center gap-2">
+              <Wallet className="w-5 h-5 text-neon-purple" /> Pending Wallet Proofs
+            </h3>
+            <Badge className={wallets.length ? "bg-yellow-500/20 text-yellow-300" : "bg-green-500/20 text-green-400"}>
+              {wallets.length ? `${wallets.length} pending` : "All clear"}
+            </Badge>
+          </div>
+
+          {isLoading ? (
+            <div className="text-center py-10 text-muted-foreground">Loading...</div>
+          ) : wallets.length === 0 ? (
+            <div className="text-center py-10 text-muted-foreground">No pending wallet proofs.</div>
+          ) : (
+            <ScrollArea className="h-[520px] pr-4">
+              <div className="space-y-3">
+                {wallets.map((w) => (
+                  <Card key={w.id} className="bg-white/5 p-4" data-testid={`verification-wallet-${w.id}`}> 
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white shrink-0">
+                          {discordAvatarUrl(w.user) ? (
+                            <img src={discordAvatarUrl(w.user)!} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            (w.user.discordUsername || w.user.kickUsername || "?").slice(0, 1).toUpperCase()
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-white font-semibold truncate">{w.user.discordUsername || w.user.kickUsername || "Unknown"}</div>
+                          <div className="text-xs text-muted-foreground truncate">{w.user.discordId}</div>
+                          <div className="text-sm text-muted-foreground mt-2">
+                            <span className="text-white font-medium">{w.casino.name}</span>
+                          </div>
+                          <div className="text-xs text-muted-foreground font-mono break-all mt-1">{w.solAddress}</div>
+                          <div className="text-xs text-muted-foreground mt-2">
+                            Submitted: {w.createdAt ? new Date(w.createdAt as any).toLocaleString() : ""}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {w.screenshotUrl ? (
+                          <a
+                            href={w.screenshotUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-neon-cyan hover:text-neon-cyan/80"
+                            title="View proof"
+                          >
+                            <Image className="w-5 h-5" />
+                          </a>
+                        ) : null}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => verifyWallet.mutate(w.id)}
+                          disabled={verifyWallet.isPending}
+                        >
+                          Verify
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </ScrollArea>
+          )}
+        </Card>
+      </div>
+
+      {error ? (
+        <div className="mt-6 text-sm text-red-400">{(error as any)?.message || "Failed to load verifications"}</div>
+      ) : null}
+
+      <div className="mt-6 text-xs text-muted-foreground">Total pending items: {total}</div>
+    </div>
+  );
+}
 
 function PlayersTab({ casinos }: { casinos: Casino[] }) {
   const { toast } = useToast();
@@ -1488,6 +2294,38 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
     },
     onError: (error: Error) => {
       toast({ title: "Failed to add payment", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const verifyCasinoAccount = useMutation({
+    mutationFn: async (id: number) => {
+      return adminFetch(`/api/casino-accounts/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ verified: true }),
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Casino account verified" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users", selectedUserId] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to verify", description: error.message, variant: "destructive" });
+    },
+  });
+
+  const verifyWallet = useMutation({
+    mutationFn: async (id: number) => {
+      return adminFetch(`/api/wallets/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ verified: true }),
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Wallet verified" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users", selectedUserId] });
+    },
+    onError: (error: Error) => {
+      toast({ title: "Failed to verify", description: error.message, variant: "destructive" });
     },
   });
 
@@ -1618,9 +2456,22 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                                 ID: <span className="text-white font-mono">{account.odId}</span>
                               </div>
                             </div>
-                            <Badge className={account.verified ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400"}>
-                              {account.verified ? "Verified" : "Pending"}
-                            </Badge>
+                            <div className="flex items-center gap-2">
+                              {!account.verified && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => verifyCasinoAccount.mutate(account.id)}
+                                  disabled={verifyCasinoAccount.isPending}
+                                  data-testid={`button-verify-casino-account-${account.id}`}
+                                >
+                                  Verify
+                                </Button>
+                              )}
+                              <Badge className={account.verified ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400"}>
+                                {account.verified ? "Verified" : "Pending"}
+                              </Badge>
+                            </div>
                           </div>
                         </Card>
                       ))}
@@ -1655,6 +2506,17 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                                 >
                                   <Image className="w-5 h-5" />
                                 </a>
+                              )}
+                              {!wallet.verified && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => verifyWallet.mutate(wallet.id)}
+                                  disabled={verifyWallet.isPending}
+                                  data-testid={`button-verify-wallet-${wallet.id}`}
+                                >
+                                  Verify
+                                </Button>
                               )}
                               <Badge className={wallet.verified ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400"}>
                                 {wallet.verified ? "Verified" : "Pending"}
