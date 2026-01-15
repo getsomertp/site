@@ -73,6 +73,12 @@ shared/
 - `SESSION_SECRET` - Secret for session encryption (required)
 - `ADMIN_SECRET` - Admin password for login (required)
 
+**Object Storage (optional, recommended for production)**
+- Casino logos and wallet-proof screenshots can be uploaded to an S3-compatible provider.
+- Supported env var names: use either **S3_*** or **R2_*** (Cloudflare R2). See `.env.example`.
+- Public assets (casino logos) are served via a presigned proxy route (`/api/public/files/...`) unless you provide a public CDN/base URL.
+- Wallet proofs are stored privately and are **admin-only** via `/api/files/...`.
+
 ## Security Notes
 
 ### Admin Authentication

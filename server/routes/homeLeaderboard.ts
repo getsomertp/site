@@ -17,8 +17,8 @@ router.get("/leaderboard", async (_req, res) => {
       WHERE l.period_type = ${period}
         AND l.is_active = true
       GROUP BY c.id
-      -- `leaderboard_entries` stores the numeric ranking metric in `value`.
-      -- Older code referenced a non-existent `wagered` column, which breaks on fresh DBs.
+      -- leaderboard_entries stores the numeric ranking metric in value.
+      -- Older code referenced a non-existent wagered column, which breaks on fresh DBs.
       ORDER BY SUM(le.value) DESC
       LIMIT 1
     `);

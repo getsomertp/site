@@ -45,20 +45,90 @@ function normalizeBool(v: unknown, fallback: boolean): boolean {
   return fallback;
 }
 
+function envFirst(...keys: string[]): string | undefined {
+  for (const k of keys) {
+    const v = process.env[k];
+    if (v !== undefined && v !== null && String(v).trim() !== "") return String(v).trim();
+  }
+  return undefined;
+}
+
+type ObjectStorageConfig = {
+  endpoint?: string;
+  region: string;
+  bucket?: string;
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  publicBase?: string;
+  forcePathStyle: boolean;
+  useProxy: boolean;
+  isRailway: boolean;
+  isR2: boolean;
+};
+
+let _objCfg: ObjectStorageConfig | null = null;
+
+function getObjectStorageConfig(): ObjectStorageConfig {
+  if (_objCfg) return _objCfg;
+
+  const bucket = envFirst("S3_BUCKET", "R2_BUCKET");
+  const publicBase = envFirst("S3_PUBLIC_BASE_URL", "R2_PUBLIC_BASE_URL");
+  const accessKeyId = envFirst("S3_ACCESS_KEY_ID", "R2_ACCESS_KEY_ID");
+  const secretAccessKey = envFirst("S3_SECRET_ACCESS_KEY", "R2_SECRET_ACCESS_KEY");
+  const region = envFirst("S3_REGION", "R2_REGION") || "auto";
+
+  const runningOnRailway = Boolean(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID || process.env.RAILWAY_SERVICE_ID);
+
+  let endpoint =
+    envFirst("S3_ENDPOINT", "R2_ENDPOINT") ||
+    (envFirst("R2_ACCOUNT_ID") ? `https://${envFirst("R2_ACCOUNT_ID")}.r2.cloudflarestorage.com` : undefined);
+
+  // If creds+bucket exist on Railway but endpoint was omitted, use Railway object storage endpoint.
+  if (!endpoint && runningOnRailway && bucket && accessKeyId && secretAccessKey) {
+    endpoint = "https://storage.railway.app";
+  }
+
+  const isRailway = Boolean(String(endpoint || "").includes("storage.railway.app") || String(publicBase || "").includes("storage.railway.app"));
+  const isR2 = Boolean(String(endpoint || "").includes("r2.cloudflarestorage.com"));
+
+  // R2 prefers path-style; Railway prefers virtual-hosted-style.
+  const defaultForcePathStyle = isR2 ? true : isRailway ? false : Boolean(endpoint && !String(endpoint).includes("amazonaws.com"));
+  const forcePathStyle = normalizeBool(envFirst("S3_FORCE_PATH_STYLE", "R2_FORCE_PATH_STYLE"), defaultForcePathStyle);
+
+  // Default to proxying if:
+  // - Railway object storage (typically private)
+  // - Cloudflare R2 (typically private)
+  // - no public base URL is configured
+  const defaultUseProxy = isRailway || isR2 || !publicBase;
+  const useProxy = normalizeBool(envFirst("S3_USE_PROXY", "R2_USE_PROXY"), defaultUseProxy);
+
+  _objCfg = {
+    endpoint,
+    region,
+    bucket,
+    accessKeyId,
+    secretAccessKey,
+    publicBase,
+    forcePathStyle,
+    useProxy,
+    isRailway,
+    isR2,
+  };
+
+  return _objCfg;
+}
+
 function isRailwayObjectStorage(): boolean {
-  const endpoint = String(process.env.S3_ENDPOINT || "");
-  const publicBase = String(process.env.S3_PUBLIC_BASE_URL || "");
-  return endpoint.includes("storage.railway.app") || publicBase.includes("storage.railway.app");
+  return getObjectStorageConfig().isRailway;
 }
 
 function shouldProxyPublicObjects(): boolean {
-  // Railway's object storage is typically private; proxying via presigned URLs is the safest default.
-  return normalizeBool(process.env.S3_USE_PROXY, isRailwayObjectStorage());
+  return getObjectStorageConfig().useProxy;
 }
 
 function getPublicUrl(key: string) {
   if (shouldProxyPublicObjects()) return `/api/public/files/${encodeURIComponent(key)}`;
-  const base = process.env.S3_PUBLIC_BASE_URL;
+  const base = getObjectStorageConfig().publicBase;
   if (base) return `${base.replace(/\/$/, "")}/${key}`;
   return null;
 }
@@ -66,6 +136,20 @@ function getPublicUrl(key: string) {
 function privateFileUrl(key: string) {
   // Always served via auth-gated proxy route
   return `/api/files/${encodeURIComponent(key)}`;
+}
+
+function normalizeWalletProofUrl(value: any): string | null {
+  if (value === undefined || value === null) return null;
+  const s = String(value).trim();
+  if (!s) return null;
+  // already a route URL
+  if (s.startsWith("/api/files/")) return s;
+  // legacy full URL
+  if (/^https?:\/\//i.test(s)) return s;
+  // stored key
+  if (s.startsWith("wallets/")) return privateFileUrl(s);
+  // fallback: treat as key
+  return privateFileUrl(s);
 }
 
 function privateLocalPathFromKey(key: string) {
@@ -81,21 +165,14 @@ function privateLocalPath(key: string) {
 }
 
 function s3Client() {
-  const endpoint = process.env.S3_ENDPOINT || (isRailwayObjectStorage() ? "https://storage.railway.app" : undefined);
-  const region = process.env.S3_REGION || "auto";
-  const accessKeyId = process.env.S3_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
-  if (!endpoint || !accessKeyId || !secretAccessKey) return null;
-
-  // R2 prefers path-style; Railway prefers virtual-hosted-style.
-  const defaultForcePath = !String(endpoint).includes("storage.railway.app");
-  const forcePathStyle = normalizeBool(process.env.S3_FORCE_PATH_STYLE, defaultForcePath);
+  const cfg = getObjectStorageConfig();
+  if (!cfg.endpoint || !cfg.accessKeyId || !cfg.secretAccessKey) return null;
 
   return new S3Client({
-    region,
-    endpoint,
-    credentials: { accessKeyId, secretAccessKey },
-    forcePathStyle,
+    region: cfg.region,
+    endpoint: cfg.endpoint,
+    credentials: { accessKeyId: cfg.accessKeyId, secretAccessKey: cfg.secretAccessKey },
+    forcePathStyle: cfg.forcePathStyle,
   });
 }
 
@@ -258,7 +335,7 @@ app.get("/api/public/files/:key(*)", async (req: Request, res: Response) => {
       return res.status(404).json({ error: "Not found" });
     }
 
-    const bucket = process.env.S3_BUCKET;
+    const bucket = getObjectStorageConfig().bucket;
     const client = s3Client();
     if (!bucket || !client) return res.status(404).json({ error: "File not available" });
 
@@ -274,8 +351,8 @@ app.get("/api/public/files/:key(*)", async (req: Request, res: Response) => {
   }
 });
 
-// Private file proxy (wallet proofs, etc). Requires auth and ownership.
-app.get("/api/files/:key(*)", requireAuthOrAdmin, async (req: Request, res: Response) => {
+// Private file proxy (wallet proofs, etc). Admin-only.
+app.get("/api/files/:key(*)", adminAuth, async (req: Request, res: Response) => {
   try {
     const rawKey = String((req.params as any).key || "");
     const key = decodeURIComponent(rawKey).replace(/\\/g, "/");
@@ -286,16 +363,12 @@ app.get("/api/files/:key(*)", requireAuthOrAdmin, async (req: Request, res: Resp
       return res.status(404).json({ error: "Not found" });
     }
 
-    // wallets/<userId>/<casinoId>/<filename>
-    const parts = key.split("/");
-    const ownerId = parts.length >= 2 ? parts[1] : "";
-    const requesterId = getAuthedUserId(req);
-    if (!ownerId) return res.status(404).json({ error: "Not found" });
-    if (!req.session?.isAdmin && (!requesterId || requesterId !== ownerId)) {
-      return res.status(403).json({ error: "Forbidden" });
-    }
+    // Security: never cache private proofs
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("X-Content-Type-Options", "nosniff");
 
-    const bucket = process.env.S3_BUCKET;
+    const bucket = getObjectStorageConfig().bucket;
     const client = s3Client();
     if (bucket && client) {
       const signed = await getSignedUrl(
@@ -342,7 +415,7 @@ app.post(
 
       const key = `wallets/${userId}/${casinoId}/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
 
-      const bucket = process.env.S3_BUCKET;
+      const bucket = getObjectStorageConfig().bucket;
       const client = s3Client();
 
       if (client && bucket) {
@@ -352,15 +425,17 @@ app.post(
             Key: key,
             Body: file.buffer,
             ContentType: file.mimetype || "application/octet-stream",
+            CacheControl: "no-store",
+            ContentDisposition: "inline",
           }),
         );
-        return res.json({ url: privateFileUrl(key), key });
+        return res.json({ key });
       }
 
       const outPath = privateLocalPathFromKey(key);
       fs.mkdirSync(path.dirname(outPath), { recursive: true });
       fs.writeFileSync(outPath, file.buffer);
-      return res.json({ url: privateFileUrl(key), key });
+      return res.json({ key });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message || "Failed to upload wallet proof" });
     }
@@ -377,7 +452,7 @@ app.post("/api/admin/uploads/casino-logo", adminAuth, upload.single("logo"), asy
     const key = `casinos/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
     auditAdmin(req, "casino.logo.upload", "file", key, { mimetype: file.mimetype, size: file.size });
 
-    const bucket = process.env.S3_BUCKET;
+    const bucket = getObjectStorageConfig().bucket;
     const client = s3Client();
 
     // Prefer S3/R2 if configured
@@ -1209,7 +1284,15 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
         return res.status(404).json({ error: "User not found" });
       }
       const casinoAccounts = await storage.getUserCasinoAccounts(id);
-      const wallets = await storage.getUserWallets(id);
+      const walletsRaw = await storage.getUserWallets(id);
+
+      const wallets = (walletsRaw || []).map((w: any) => {
+        const hasProof = Boolean(w?.screenshotUrl);
+        if (req.session?.isAdmin) {
+          return { ...w, screenshotUrl: normalizeWalletProofUrl(w?.screenshotUrl) };
+        }
+        return { ...w, screenshotUrl: null, hasProof };
+      });
       res.json({ ...user, casinoAccounts, wallets });
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch user" });
@@ -1331,7 +1414,27 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
     try {
       const userId = req.params.id;
       const data = insertUserWalletSchema.parse({ ...req.body, userId });
-      const wallet = await storage.createUserWallet(data);
+
+      // For wallet proofs we store the object *key* (e.g. wallets/...) not a URL.
+      // Accept legacy /api/files/... values by converting them back to the key.
+      let screenshotUrl = (data as any).screenshotUrl as any;
+      if (typeof screenshotUrl === "string") {
+        const s = screenshotUrl.trim();
+        if (s) {
+          if (s.startsWith("/api/files/")) {
+            screenshotUrl = decodeURIComponent(s.slice("/api/files/".length));
+          } else {
+            screenshotUrl = s;
+          }
+          if (!String(screenshotUrl).startsWith("wallets/")) {
+            return res.status(400).json({ error: "Invalid wallet proof key" });
+          }
+        } else {
+          screenshotUrl = undefined;
+        }
+      }
+
+      const wallet = await storage.createUserWallet({ ...(data as any), screenshotUrl });
       res.status(201).json(wallet);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -1465,7 +1568,13 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
       if (!details) {
         return res.status(404).json({ error: "User not found" });
       }
-      res.json(details);
+
+      const wallets = (details.wallets || []).map((w: any) => ({
+        ...w,
+        screenshotUrl: normalizeWalletProofUrl((w as any).screenshotUrl),
+      }));
+
+      res.json({ ...details, wallets });
     } catch (error) {
       res.status(500).json({ error: getErrorMessage(error, "Failed to fetch user details") });
     }
@@ -1479,7 +1588,14 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
       const q = String((req.query as any)?.q || "").trim();
       const limit = Number((req.query as any)?.limit || 200);
       const data = await storage.getPendingVerifications({ q, limit });
-      return res.json(data);
+
+      // Normalize private wallet proof URLs for admin viewing
+      const wallets = (data.wallets || []).map((w: any) => ({
+        ...w,
+        screenshotUrl: normalizeWalletProofUrl((w as any).screenshotUrl),
+      }));
+
+      return res.json({ ...data, wallets });
     } catch (error) {
       return res.status(500).json({ error: getErrorMessage(error, "Failed to load verifications") });
     }

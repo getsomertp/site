@@ -379,8 +379,15 @@ export class DatabaseStorage implements IStorage {
         target: [userWallets.userId, userWallets.casinoId],
         set: {
           solAddress: wallet.solAddress,
-          screenshotUrl: wallet.screenshotUrl ?? null,
-          verified: false,
+          // Preserve existing proof if the caller doesn't send a new one
+          screenshotUrl: sql`COALESCE(excluded.screenshot_url, ${userWallets.screenshotUrl})`,
+          // Only reset verification when something actually changes
+          verified: sql`CASE
+            WHEN excluded.sol_address IS DISTINCT FROM ${userWallets.solAddress}
+              OR COALESCE(excluded.screenshot_url, ${userWallets.screenshotUrl}) IS DISTINCT FROM ${userWallets.screenshotUrl}
+            THEN FALSE
+            ELSE ${userWallets.verified}
+          END`,
         },
       })
       .returning();

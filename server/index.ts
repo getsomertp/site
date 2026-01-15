@@ -124,6 +124,47 @@ app.use(
 app.get("/health", (_req, res) => res.status(200).json({ ok: true }));
 app.get("/api/health", (_req, res) => res.status(200).json({ ok: true }));
 
+// Basic SEO helpers (robots + sitemap). These are served by the backend so we can
+// emit absolute URLs based on the live deployment domain.
+function getBaseUrl(req: Request) {
+  const xfProto = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+  const proto = xfProto || req.protocol || "https";
+  const xfHost = String(req.headers["x-forwarded-host"] || "").split(",")[0].trim();
+  const host = xfHost || req.get("host") || "";
+  return `${proto}://${host}`;
+}
+
+app.get("/robots.txt", (req, res) => {
+  const base = getBaseUrl(req);
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader("Cache-Control", "public, max-age=3600");
+  res.send(["User-agent: *", "Allow: /", `Sitemap: ${base}/sitemap.xml`, ""].join("\n"));
+});
+
+app.get("/sitemap.xml", (req, res) => {
+  const base = getBaseUrl(req);
+  const urls = [
+    "/",
+    "/partners",
+    "/giveaways",
+    "/winners",
+    "/leaderboard",
+    "/stream-games",
+    "/affiliates",
+    "/profile",
+  ];
+
+  const lastmod = new Date().toISOString();
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>\n` +
+    `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n` +
+    urls.map((p) => `  <url><loc>${base}${p}</loc><lastmod>${lastmod}</lastmod></url>`).join("\n") +
+    `\n</urlset>\n`;
+
+  res.setHeader("Content-Type", "application/xml; charset=utf-8");
+  res.setHeader("Cache-Control", "public, max-age=3600");
+  res.send(xml);
+});
+
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
