@@ -25,8 +25,8 @@ async function uploadCasinoLogo(file: File): Promise<string> {
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Settings, Plus, Trash2, Edit, Save, X, ExternalLink, Trophy, Gift, Lock, Users, Search, DollarSign, Wallet, Image, Tv, LogIn, LogOut, Download, ScrollText, BadgeCheck } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { Settings, Plus, Trash2, Edit, Save, X, ExternalLink, Trophy, Gift, Lock, Users, Search, DollarSign, Wallet, Image, Tv, LogIn, LogOut, Download, ScrollText, BadgeCheck, Loader2 } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,6 +37,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Badge } from "@/components/ui/badge";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
+import { useSeo } from "@/lib/seo";
 import { StreamEvents } from "@/components/StreamEvents";
 import { useToast } from "@/hooks/use-toast";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -273,6 +274,11 @@ function AdminLogin({ onLogin }: { onLogin: () => void }) {
 }
 
 export default function Admin() {
+  useSeo({
+    title: "Admin",
+    description: "Manage casinos, giveaways, users, and site settings.",
+    path: "/admin",
+  });
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);

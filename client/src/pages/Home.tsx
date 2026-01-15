@@ -6,10 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
+import { GiveawayRulesModal } from "@/components/GiveawayRulesModal";
 import heroBg from "@assets/generated_images/dark_neon_casino_background.png";
 import { normalizeExternalUrl } from "@/lib/url";
 import { useSession } from "@/hooks/useSession";
 import { useToast } from "@/hooks/use-toast";
+import { useSeo } from "@/lib/seo";
 import type { Giveaway, GiveawayRequirement } from "@shared/schema";
 
 type Casino = {
@@ -28,15 +30,6 @@ type GiveawayWithDetails = Giveaway & {
   entries: number;
   requirements: GiveawayRequirement[];
   hasEntered?: boolean;
-};
-
-type RecentWinner = {
-  id: number;
-  title: string;
-  prize: string;
-  endsAt: string | Date;
-  casino: { id: number; name: string; slug: string; logo?: string | null } | null;
-  winner: { id: string; discordUsername?: string | null; discordAvatarUrl?: string | null; kickUsername?: string | null } | null;
 };
 
 type HomeLeaderboard = null | {
@@ -86,6 +79,11 @@ function formatTimeRemaining(endsAt: Date | string): string {
 }
 
 export default function Home() {
+  useSeo({
+    title: "Stream Hub",
+    description: "Live giveaways, partner leaderboards, and stream games — connect with Discord and join the community.",
+    path: "/",
+  });
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: session } = useSession();
@@ -103,11 +101,6 @@ export default function Home() {
 
   const { data: giveaways = [] } = useQuery<GiveawayWithDetails[]>({
     queryKey: ["/api/giveaways/active"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-  });
-
-  const { data: recentWinners = [] } = useQuery<RecentWinner[]>({
-    queryKey: ["/api/giveaways/winners"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
@@ -170,10 +163,13 @@ export default function Home() {
     },
   });
 
-  const { data: siteSettings = {} } = useQuery<Record<string, string>>({
+  const { data: siteSettingsRaw } = useQuery<Record<string, string> | null>({
     queryKey: ["/api/site/settings"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
+
+  // Guard against null (e.g., if a proxy/auth layer returns 401).
+  const siteSettings = (siteSettingsRaw as any) || {};
 
   const { data: homeLb } = useQuery<HomeLeaderboard>({
     queryKey: ["/api/home/leaderboard"],
@@ -185,9 +181,6 @@ export default function Home() {
 
   const activeGiveaways = (giveaways || []).slice(0, 3);
   const showNoGiveaways = activeGiveaways.length === 0;
-
-  const winnersToShow = (recentWinners || []).slice(0, 3);
-  const showNoWinners = winnersToShow.length === 0;
 
 
   const kickUrl = siteSettings.kickUrl || "https://kick.com/get-some";
@@ -215,29 +208,35 @@ export default function Home() {
         </div>
 
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-20 pb-14">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-3xl">
-            <h1 className="font-display text-4xl md:text-6xl font-bold text-white leading-tight">
-              GETSOME Stream Hub
-            </h1>
-            <p className="mt-4 text-lg text-muted-foreground">
-              Live giveaways, leaderboards, and stream games — all in one place.
-            </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Button asChild>
-                <a href={kickUrl} target="_blank" rel="noreferrer">
-                  Watch Live <ExternalLink className="ml-2 w-4 h-4" />
-                </a>
-              </Button>
-              <Button variant="outline" asChild>
-                <a href={discordUrl} target="_blank" rel="noreferrer">
-                  Join Discord <ExternalLink className="ml-2 w-4 h-4" />
-                </a>
-              </Button>
-              <Button variant="secondary" asChild>
-                <a href="/stream-games">Stream Games</a>
-              </Button>
-            </div>
-          </motion.div>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="lg:col-span-12"
+            >
+              <h1 className="font-display text-4xl md:text-6xl font-bold text-white leading-tight">
+                GETSOME Stream Hub
+              </h1>
+              <p className="mt-4 text-lg text-muted-foreground">
+                Live giveaways, leaderboards, and stream games — all in one place.
+              </p>
+              <div className="mt-8 flex flex-wrap gap-3">
+                <Button asChild>
+                  <a href={kickUrl} target="_blank" rel="noreferrer">
+                    Watch Live <ExternalLink className="ml-2 w-4 h-4" />
+                  </a>
+                </Button>
+                <Button variant="outline" asChild>
+                  <a href={discordUrl} target="_blank" rel="noreferrer">
+                    Join Discord <ExternalLink className="ml-2 w-4 h-4" />
+                  </a>
+                </Button>
+                <Button variant="secondary" asChild>
+                  <a href="/stream-games">Stream Games</a>
+                </Button>
+              </div>
+            </motion.div>
+          </div>
 
           {/* Stats */}
           <div className="mt-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -288,6 +287,9 @@ export default function Home() {
             <h2 className="text-2xl font-bold text-white">Casino Partners</h2>
             <p className="text-muted-foreground">Use the official links to support the stream.</p>
           </div>
+          <Button variant="outline" asChild>
+            <a href="/partners">View All</a>
+          </Button>
         </div>
 
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -348,9 +350,12 @@ export default function Home() {
             <p className="text-muted-foreground">Active giveaways running on stream.</p>
           </div>
 
-          <Button variant="outline" asChild>
-            <a href="/giveaways">View All</a>
-          </Button>
+          <div className="flex items-center gap-2">
+            <GiveawayRulesModal variant="outline" className="border-white/15 text-white hover:bg-white/5" />
+            <Button variant="outline" asChild>
+              <a href="/giveaways">View All</a>
+            </Button>
+          </div>
         </div>
 
         <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -425,55 +430,6 @@ export default function Home() {
         </div>
       </section>
 
-
-
-      {/* Recent Winners */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12">
-        <div className="flex items-end justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-bold text-white">Recent Winners</h2>
-            <p className="text-muted-foreground">Latest giveaway winners announced on stream.</p>
-          </div>
-          <Button variant="outline" asChild>
-            <a href="/giveaways">View Giveaways</a>
-          </Button>
-        </div>
-
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-          {showNoWinners ? (
-            <Card className="p-6 md:col-span-3">
-              <div className="text-white font-semibold">No winners yet</div>
-              <div className="text-muted-foreground text-sm mt-1">
-                Once a giveaway ends and a winner is picked, it will appear here.
-              </div>
-            </Card>
-          ) : (
-            winnersToShow.map((w) => (
-              <Card key={w.id} className="p-6">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white">
-                    {w.winner?.discordAvatarUrl ? (
-                      <img src={w.winner.discordAvatarUrl} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      (w.winner?.discordUsername || w.winner?.kickUsername || "?").slice(0, 1).toUpperCase()
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-white font-semibold truncate">{w.winner?.discordUsername || w.winner?.kickUsername || "Winner"}</div>
-                    <div className="text-xs text-muted-foreground truncate">{w.casino?.name ? `${w.casino.name}` : "Giveaway"}</div>
-                  </div>
-                </div>
-
-                <div className="mt-4 text-white font-semibold line-clamp-2">{w.title}</div>
-                <div className="mt-2 text-2xl font-bold text-neon-gold">{w.prize}</div>
-                <div className="mt-2 text-xs text-muted-foreground">
-                  Ended: {w.endsAt ? new Date(w.endsAt as any).toLocaleDateString() : "—"}
-                </div>
-              </Card>
-            ))
-          )}
-        </div>
-      </section>
       {/* Leaderboard */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-16">
         <div className="flex items-end justify-between gap-4">

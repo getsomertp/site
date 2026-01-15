@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, X, Trophy, Gift, Handshake, LogIn, Settings, Zap, User } from "lucide-react";
+import { Menu, X, Trophy, Gift, Handshake, LogIn, Settings, Zap, User, Crown, Building2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { getQueryFn } from "@/lib/queryClient";
 import { useSession } from "@/hooks/useSession";
@@ -13,6 +13,8 @@ const publicLinks = [
   { href: "/", label: "Home" },
   { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
   { href: "/giveaways", label: "Giveaways", icon: Gift },
+  { href: "/winners", label: "Winners", icon: Crown },
+  { href: "/partners", label: "Partners", icon: Building2 },
   { href: "/stream-games", label: "Stream Games", icon: Zap },
   { href: "/affiliates", label: "Affiliates", icon: Handshake },
   { href: "/profile", label: "Profile", icon: User },

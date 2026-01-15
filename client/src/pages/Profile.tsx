@@ -1,386 +1,668 @@
-import { useState } from "react";
-import { motion } from "framer-motion";
-import { User, Check, Upload, X, ExternalLink, Shield, Wallet, Tv, Copy } from "lucide-react";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { apiRequest } from "@/lib/queryClient";
+import { useSession } from "@/hooks/useSession";
+import { useToast } from "@/hooks/use-toast";
+
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Separator } from "@/components/ui/separator";
+import { Progress } from "@/components/ui/progress";
+import { Loader2, CheckCircle2, Clock, Pencil, Trash2, ExternalLink } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
+import { Footer } from "@/components/Footer";
+import { useSeo } from "@/lib/seo";
 
-const casinos = [
-  { id: "stake", name: "Stake", code: "GETSOME", color: "#1a1a2e" },
-  { id: "rollbit", name: "Rollbit", code: "GETSOME150", color: "#ff6b35" },
-  { id: "duelbits", name: "Duelbits", code: "GETSOMEFREE", color: "#00d4aa" },
-  { id: "gamdom", name: "Gamdom", code: "GETSOMERAKE", color: "#7c3aed" },
-  { id: "roobet", name: "Roobet", code: "GETSOMEVIP", color: "#fbbf24" },
-  { id: "bcgame", name: "BC.Game", code: "GETSOMESPIN", color: "#22c55e" },
-];
+import type { Casino, UserCasinoAccount, UserWallet } from "@shared/schema";
 
-const mockUser = {
-  discord: {
-    username: "GamingPro#1234",
-    id: "123456789012345678",
-    avatar: "GP",
-    connected: true
-  },
-  kick: {
-    username: "",
-    verified: false
-  },
-  casinoAccounts: {} as Record<string, { username: string; odId: string; verified: boolean }>,
-  wallets: {} as Record<string, { address: string; screenshot: string | null }>
+type ProfileResponse = {
+  id: string;
+  discordUsername?: string | null;
+  discordAvatar?: string | null;
+  kickUsername?: string | null;
+  kickVerified?: boolean | null;
+  casinoAccounts: UserCasinoAccount[];
+  wallets: UserWallet[];
 };
 
+function statusBadge(verified: boolean) {
+  return verified ? (
+    <Badge className="gap-1">
+      <CheckCircle2 className="h-3.5 w-3.5" /> Verified
+    </Badge>
+  ) : (
+    <Badge variant="secondary" className="gap-1">
+      <Clock className="h-3.5 w-3.5" /> Pending
+    </Badge>
+  );
+}
+
 export default function Profile() {
-  const [user] = useState(mockUser);
+  useSeo({
+    title: "Profile",
+    description: "Manage your linked casino accounts, wallet proof, and verification status.",
+    path: "/profile",
+  });
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+
+  const session = useSession();
+  const userId = session.data?.user?.id ?? null;
+
+  const { data: casinos, isLoading: casinosLoading } = useQuery<Casino[]>({
+    queryKey: ["/api/casinos"],
+  });
+
+  const {
+    data: profile,
+    isLoading: profileLoading,
+  } = useQuery<ProfileResponse>({
+    queryKey: userId ? ["/api/users", userId] : ["/api/users", "_"],
+    enabled: Boolean(userId),
+  });
+
+  // ------- Local form state -------
   const [kickUsername, setKickUsername] = useState("");
-  const [casinoInputs, setCasinoInputs] = useState<Record<string, { username: string; odId: string }>>({});
-  const [walletInputs, setWalletInputs] = useState<Record<string, { address: string; file: File | null }>>({});
-  const [savedCasinos, setSavedCasinos] = useState<Record<string, boolean>>({});
-  const [savedWallets, setSavedWallets] = useState<Record<string, boolean>>({});
-  const [kickSaved, setKickSaved] = useState(false);
 
-  const handleCasinoChange = (casinoId: string, field: "username" | "odId", value: string) => {
-    setCasinoInputs(prev => ({
-      ...prev,
-      [casinoId]: { ...prev[casinoId], [field]: value }
-    }));
-  };
+  const [casinoInputs, setCasinoInputs] = useState<Record<number, { username: string; odId: string }>>({});
+  const [casinoExisting, setCasinoExisting] = useState<Record<number, UserCasinoAccount>>({});
+  const [casinoEditing, setCasinoEditing] = useState<Record<number, boolean>>({});
 
-  const handleWalletChange = (casinoId: string, address: string) => {
-    setWalletInputs(prev => ({
-      ...prev,
-      [casinoId]: { ...prev[casinoId], address }
-    }));
-  };
+  const [walletInputs, setWalletInputs] = useState<Record<number, { solAddress: string; file: File | null }>>({});
+  const [walletExisting, setWalletExisting] = useState<Record<number, UserWallet>>({});
+  const [walletEditing, setWalletEditing] = useState<Record<number, boolean>>({});
 
-  const handleFileUpload = (casinoId: string, file: File | null) => {
-    setWalletInputs(prev => ({
-      ...prev,
-      [casinoId]: { ...prev[casinoId], file }
-    }));
-  };
+  useEffect(() => {
+    if (!profile) return;
 
-  const saveCasino = (casinoId: string) => {
-    setSavedCasinos(prev => ({ ...prev, [casinoId]: true }));
-  };
+    setKickUsername(profile.kickUsername ?? "");
 
-  const saveWallet = (casinoId: string) => {
-    setSavedWallets(prev => ({ ...prev, [casinoId]: true }));
-  };
+    const existingAccounts: Record<number, UserCasinoAccount> = {};
+    const nextCasinoInputs: Record<number, { username: string; odId: string }> = {};
+    for (const acc of profile.casinoAccounts || []) {
+      existingAccounts[acc.casinoId] = acc;
+      nextCasinoInputs[acc.casinoId] = { username: acc.username ?? "", odId: acc.odId ?? "" };
+    }
+
+    const existingWallets: Record<number, UserWallet> = {};
+    const nextWalletInputs: Record<number, { solAddress: string; file: File | null }> = {};
+    for (const w of profile.wallets || []) {
+      existingWallets[w.casinoId] = w;
+      nextWalletInputs[w.casinoId] = { solAddress: w.solAddress ?? "", file: null };
+    }
+
+    setCasinoExisting(existingAccounts);
+    setCasinoInputs((prev) => ({ ...nextCasinoInputs, ...prev }));
+    setWalletExisting(existingWallets);
+    setWalletInputs((prev) => ({ ...nextWalletInputs, ...prev }));
+
+    // Reset edit mode if server data changed (keeps UI consistent)
+    setCasinoEditing({});
+    setWalletEditing({});
+  }, [profile]);
+
+  const activeCasinos = useMemo(() => {
+    return (casinos || []).filter((c) => c.isActive);
+  }, [casinos]);
+
+  // ------- Mutations -------
+  const updateKickMutation = useMutation({
+    mutationFn: async () => {
+      if (!userId) throw new Error("Not logged in");
+      await apiRequest("PATCH", `/api/users/${userId}`, { kickUsername: kickUsername.trim() });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/users", userId] });
+      toast({ title: "Saved", description: "Kick username updated." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not save", description: err?.message || "Try again.", variant: "destructive" });
+    },
+  });
+
+  const saveCasinoAccountMutation = useMutation({
+    mutationFn: async (casinoId: number) => {
+      if (!userId) throw new Error("Not logged in");
+      const inputs = casinoInputs[casinoId] || { username: "", odId: "" };
+      const username = inputs.username.trim();
+      const odId = inputs.odId.trim();
+      if (!username || !odId) throw new Error("Username and OD ID are required");
+
+      // Idempotent upsert on the server
+      const res = await apiRequest("POST", `/api/users/${userId}/casino-accounts`, {
+        casinoId,
+        username,
+        odId,
+      });
+      return (await res.json()) as UserCasinoAccount;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/users", userId] });
+      toast({ title: "Saved", description: "Casino account submitted for verification." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not save", description: err?.message || "Try again.", variant: "destructive" });
+    },
+  });
+
+  const deleteCasinoAccountMutation = useMutation({
+    mutationFn: async (casinoId: number) => {
+      const existing = casinoExisting[casinoId];
+      if (!existing) return;
+      await apiRequest("DELETE", `/api/casino-accounts/${existing.id}`);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/users", userId] });
+      toast({ title: "Removed", description: "Casino account removed." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not remove", description: err?.message || "Try again.", variant: "destructive" });
+    },
+  });
+
+  async function uploadWalletProof(casinoId: number, file: File) {
+    if (!userId) throw new Error("Not logged in");
+    const fd = new FormData();
+    fd.append("casinoId", String(casinoId));
+    fd.append("screenshot", file);
+
+    const res = await fetch(`/api/users/${userId}/uploads/wallet-proof`, {
+      method: "POST",
+      body: fd,
+      credentials: "include",
+    });
+
+    if (!res.ok) {
+      const text = (await res.text()) || res.statusText;
+      throw new Error(`${res.status}: ${text}`);
+    }
+
+    const json = await res.json();
+    return { key: String(json?.key || "") };
+  }
+
+  const saveWalletMutation = useMutation({
+    mutationFn: async (casinoId: number) => {
+      if (!userId) throw new Error("Not logged in");
+      const inputs = walletInputs[casinoId] || { solAddress: "", file: null };
+      const solAddress = inputs.solAddress.trim();
+      if (!solAddress) throw new Error("SOL address is required");
+
+      const existing = walletExisting[casinoId];
+      const isEditing = Boolean(walletEditing[casinoId]) || !existing;
+
+      let screenshotUrl = existing?.screenshotUrl ?? "";
+      if (isEditing) {
+        if (!inputs.file) throw new Error("Screenshot proof is required");
+        const uploaded = await uploadWalletProof(casinoId, inputs.file);
+        screenshotUrl = uploaded.key;
+      }
+
+      // Idempotent upsert on the server
+      const payload: any = { casinoId, solAddress };
+      if (isEditing) payload.screenshotUrl = screenshotUrl;
+
+      // Idempotent upsert on the server
+      const res = await apiRequest("POST", `/api/users/${userId}/wallets`, payload);
+      return (await res.json()) as UserWallet;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/users", userId] });
+      toast({ title: "Saved", description: "Wallet submitted for verification." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not save", description: err?.message || "Try again.", variant: "destructive" });
+    },
+  });
+
+  const deleteWalletMutation = useMutation({
+    mutationFn: async (casinoId: number) => {
+      const existing = walletExisting[casinoId];
+      if (!existing) return;
+      await apiRequest("DELETE", `/api/wallets/${existing.id}`);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["/api/users", userId] });
+      toast({ title: "Removed", description: "Wallet removed." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not remove", description: err?.message || "Try again.", variant: "destructive" });
+    },
+  });
+
+  // ------- Render helpers -------
+  const loading = casinosLoading || profileLoading || session.isLoading;
+  const loggedIn = Boolean(userId);
+
+const hasCasinoLink = Boolean(profile?.casinoAccounts?.length);
+const hasWalletProof = Boolean(profile?.wallets?.some((w) => Boolean(w.solAddress) && (Boolean((w as any).hasProof) || Boolean((w as any).screenshotUrl))));
+const isVerified = Boolean(
+  profile?.kickVerified ||
+  profile?.casinoAccounts?.some((a) => Boolean((a as any).verified)) ||
+  profile?.wallets?.some((w) => Boolean((w as any).verified)),
+);
+const setupStepsDone = (hasCasinoLink ? 1 : 0) + (hasWalletProof ? 1 : 0) + (isVerified ? 1 : 0);
+const setupProgress = Math.round((setupStepsDone / 3) * 100);
+
+  if (!loggedIn) {
+    return (
+      <div className="min-h-screen">
+        <Navigation />
+        <div className="pt-28 pb-24">
+          <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
+            <Card className="glass">
+              <CardHeader>
+                <CardTitle>Profile</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-muted-foreground">
+                  Please log in to manage your casino accounts and wallets.
+                </p>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+        <Footer />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen">
       <Navigation />
-      
       <div className="pt-28 pb-24">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-          <motion.div 
-            className="text-center mb-12"
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-          >
-            <div className="flex items-center justify-center gap-4 mb-4">
-              <User className="w-12 h-12 text-neon-purple" />
-              <h1 className="font-display text-5xl sm:text-6xl font-bold text-white">
-                My Profile
-              </h1>
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
+      <div className="flex items-center gap-4">
+        {profile?.discordAvatar ? (
+          <img
+            src={profile.discordAvatar}
+            alt="Avatar"
+            className="h-14 w-14 rounded-full border object-cover"
+            referrerPolicy="no-referrer"
+          />
+        ) : (
+          <div className="h-14 w-14 rounded-full border bg-muted" />
+        )}
+        <div className="flex-1">
+          <div className="text-xl font-semibold">{profile?.discordUsername || "User"}</div>
+          <div className="text-sm text-muted-foreground">Manage your casino accounts and wallet proofs.</div>
+        </div>
+        {loading ? (
+          <Badge variant="secondary" className="gap-1">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading
+          </Badge>
+        ) : (
+          <Badge variant="outline">Signed in</Badge>
+        )}
+      </div>
+
+      {/* Kick */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Kick Username</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-2">
+            <Label htmlFor="kick">Kick Username</Label>
+            <div className="flex gap-2">
+              <Input
+                id="kick"
+                value={kickUsername}
+                onChange={(e) => setKickUsername(e.target.value)}
+                placeholder="e.g. get-some"
+              />
+              <Button
+                onClick={() => updateKickMutation.mutate()}
+                disabled={updateKickMutation.isPending}
+                className="min-w-28"
+              >
+                {updateKickMutation.isPending ? (
+                  <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Saving</span>
+                ) : (
+                  "Save"
+                )}
+              </Button>
             </div>
-            <p className="text-muted-foreground text-lg">
-              Link your accounts to participate in giveaways and earn rewards
+          </div>
+
+          <div className="flex items-center gap-2">
+            {statusBadge(Boolean(profile?.kickVerified))}
+            <p className="text-sm text-muted-foreground">
+              Admin verification may be required before payouts.
             </p>
-          </motion.div>
+          </div>
+        </CardContent>
+      </Card>
 
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1 }}
-            className="mb-8"
-          >
-            <Card className="glass p-6 border-[#5865F2]/50">
-              <div className="flex items-center gap-4">
-                <div className="w-16 h-16 bg-[#5865F2] rounded-xl flex items-center justify-center text-white font-bold text-xl">
-                  {user.discord.avatar}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-display font-bold text-white text-xl">{user.discord.username}</h3>
-                    <Badge className="bg-green-500/20 text-green-400">
-                      <Check className="w-3 h-3 mr-1" /> Connected
-                    </Badge>
-                  </div>
-                  <p className="text-sm text-muted-foreground">Discord ID: {user.discord.id}</p>
-                </div>
-                <Button variant="outline" size="sm" className="font-display">
-                  Disconnect
-                </Button>
-              </div>
-            </Card>
-          </motion.div>
+      
+{/* Profile setup */}
+<Card className="border-white/10 bg-card/60">
+  <CardHeader>
+    <CardTitle className="flex items-center justify-between">
+      <span>Profile Setup</span>
+      <Badge variant={setupProgress === 100 ? "secondary" : "outline"}>
+        {setupProgress === 100 ? "Complete" : `${setupProgress}%`}
+      </Badge>
+    </CardTitle>
+  </CardHeader>
+  <CardContent className="space-y-4">
+    <Progress value={setupProgress} />
+    <div className="grid gap-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="font-medium flex items-center gap-2">
+            {hasCasinoLink ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <Clock className="h-4 w-4 text-muted-foreground" />}
+            Link at least one casino username
+          </div>
+          <div className="text-sm text-muted-foreground">Required for casino-specific giveaways and verification checks.</div>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => document.getElementById("casino-accounts")?.scrollIntoView({ behavior: "smooth" })}>
+          Manage
+        </Button>
+      </div>
 
-          <Tabs defaultValue="casinos" className="w-full">
-            <TabsList className="grid w-full grid-cols-3 mb-8 bg-card/50">
-              <TabsTrigger value="casinos" className="font-display" data-testid="tab-casinos">
-                <Shield className="w-4 h-4 mr-2" /> Casino Accounts
-              </TabsTrigger>
-              <TabsTrigger value="kick" className="font-display" data-testid="tab-kick">
-                <Tv className="w-4 h-4 mr-2" /> Kick Verification
-              </TabsTrigger>
-              <TabsTrigger value="wallets" className="font-display" data-testid="tab-wallets">
-                <Wallet className="w-4 h-4 mr-2" /> SOL Wallets
-              </TabsTrigger>
-            </TabsList>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="font-medium flex items-center gap-2">
+            {hasWalletProof ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <Clock className="h-4 w-4 text-muted-foreground" />}
+            Add a wallet proof screenshot
+          </div>
+          <div className="text-sm text-muted-foreground">Used for payouts and manual verification by the admin.</div>
+        </div>
+        <Button variant="outline" size="sm" onClick={() => document.getElementById("wallet-proofs")?.scrollIntoView({ behavior: "smooth" })}>
+          Manage
+        </Button>
+      </div>
 
-            <TabsContent value="casinos">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h2 className="font-display text-xl font-bold text-white">Link Casino Accounts</h2>
-                    <p className="text-sm text-muted-foreground">Enter your username and ID for each casino you play on with our code</p>
-                  </div>
-                </div>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="font-medium flex items-center gap-2">
+            {isVerified ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <Clock className="h-4 w-4 text-muted-foreground" />}
+            Get verified
+          </div>
+          <div className="text-sm text-muted-foreground">
+            {isVerified ? "You’re verified and eligible for verified-only giveaways." : "Waiting for admin verification once your info is submitted."}
+          </div>
+        </div>
+        <Badge variant={isVerified ? "secondary" : "outline"}>{isVerified ? "Verified" : "Pending"}</Badge>
+      </div>
+    </div>
+  </CardContent>
+</Card>
 
-                {casinos.map((casino, i) => (
-                  <motion.div
-                    key={casino.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.05 }}
-                  >
-                    <Card className="glass p-6" data-testid={`card-casino-${casino.id}`}>
-                      <div className="flex flex-col lg:flex-row lg:items-center gap-4">
-                        <div className="flex items-center gap-3 lg:w-48 flex-shrink-0">
-                          <div 
-                            className="w-12 h-12 rounded-xl flex items-center justify-center font-display font-bold text-white"
-                            style={{ backgroundColor: casino.color }}
-                          >
-                            {casino.name.slice(0, 2)}
-                          </div>
-                          <div>
-                            <h3 className="font-display font-bold text-white">{casino.name}</h3>
-                            <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                              <span>Code:</span>
-                              <span className="font-mono text-neon-cyan">{casino.code}</span>
-                              <Copy className="w-3 h-3 cursor-pointer hover:text-white" />
-                            </div>
-                          </div>
-                        </div>
+{/* Casino accounts */}
+      <Card id="casino-accounts">
+        <CardHeader>
+          <CardTitle>Casino Accounts</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {activeCasinos.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No casinos yet.</p>
+          ) : (
+            <div className="grid gap-4">
+              {activeCasinos.map((casino) => {
+                const existing = casinoExisting[casino.id];
+                const isEditing = casinoEditing[casino.id] || !existing;
+                const inputs = casinoInputs[casino.id] || { username: "", odId: "" };
 
-                        <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block">Username</Label>
-                            <Input
-                              placeholder={`Your ${casino.name} username`}
-                              value={casinoInputs[casino.id]?.username || ""}
-                              onChange={(e) => handleCasinoChange(casino.id, "username", e.target.value)}
-                              className="bg-white/5 border-white/10"
-                              disabled={savedCasinos[casino.id]}
-                              data-testid={`input-username-${casino.id}`}
-                            />
-                          </div>
-                          <div>
-                            <Label className="text-xs text-muted-foreground mb-1 block">User ID / OD ID</Label>
-                            <Input
-                              placeholder="Your numeric ID"
-                              value={casinoInputs[casino.id]?.odId || ""}
-                              onChange={(e) => handleCasinoChange(casino.id, "odId", e.target.value)}
-                              className="bg-white/5 border-white/10"
-                              disabled={savedCasinos[casino.id]}
-                              data-testid={`input-id-${casino.id}`}
-                            />
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2 lg:flex-shrink-0">
-                          {savedCasinos[casino.id] ? (
-                            <Badge className="bg-green-500/20 text-green-400">
-                              <Check className="w-3 h-3 mr-1" /> Saved
-                            </Badge>
+                return (
+                  <Card key={casino.id} className="border-muted">
+                    <CardContent className="p-4 space-y-4">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          {casino.logo ? (
+                            <img src={casino.logo} alt={casino.name} className="h-10 w-10 rounded-full object-cover" />
                           ) : (
-                            <Button 
-                              className="font-display bg-neon-purple hover:bg-neon-purple/80"
-                              onClick={() => saveCasino(casino.id)}
-                              disabled={!casinoInputs[casino.id]?.username || !casinoInputs[casino.id]?.odId}
-                              data-testid={`button-save-${casino.id}`}
+                            <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center text-xs font-bold">
+                              {casino.name.slice(0, 2).toUpperCase()}
+                            </div>
+                          )}
+                          <div>
+                            <div className="font-medium">{casino.name}</div>
+                            <div className="text-xs text-muted-foreground">Link your username + OD ID for leaderboards / giveaways.</div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {existing ? statusBadge(Boolean(existing.verified)) : <Badge variant="outline">Not linked</Badge>}
+                          {existing && !isEditing && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setCasinoEditing((p) => ({ ...p, [casino.id]: true }))}
+                              className="gap-1"
                             >
-                              Save
+                              <Pencil className="h-4 w-4" /> Edit
+                            </Button>
+                          )}
+                          {existing && (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => deleteCasinoAccountMutation.mutate(casino.id)}
+                              disabled={deleteCasinoAccountMutation.isPending}
+                              className="gap-1"
+                            >
+                              <Trash2 className="h-4 w-4" /> Remove
                             </Button>
                           )}
                         </div>
                       </div>
-                    </Card>
-                  </motion.div>
-                ))}
-              </div>
-            </TabsContent>
 
-            <TabsContent value="kick">
-              <Card className="glass p-8" data-testid="card-kick-verification">
-                <div className="max-w-md mx-auto text-center">
-                  <div className="w-20 h-20 bg-[#53fc18] rounded-2xl flex items-center justify-center mx-auto mb-6">
-                    <Tv className="w-10 h-10 text-black" />
-                  </div>
-                  
-                  <h2 className="font-display text-2xl font-bold text-white mb-2">Kick Verification</h2>
-                  <p className="text-muted-foreground mb-8">
-                    Link your Kick account to verify you're following GETSOME and unlock exclusive rewards
-                  </p>
+                      <Separator />
 
-                  {kickSaved ? (
-                    <div className="space-y-4">
-                      <Badge className="bg-green-500/20 text-green-400 text-base px-4 py-2">
-                        <Check className="w-4 h-4 mr-2" /> Kick Account Linked
-                      </Badge>
-                      <p className="text-white font-display text-lg">@{kickUsername}</p>
-                      <Button variant="outline" className="font-display" onClick={() => setKickSaved(false)}>
-                        Change Account
-                      </Button>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      <div className="text-left">
-                        <Label className="text-muted-foreground mb-2 block">Kick Username</Label>
-                        <Input
-                          placeholder="your_kick_username"
-                          value={kickUsername}
-                          onChange={(e) => setKickUsername(e.target.value)}
-                          className="bg-white/5 border-white/10 text-center text-lg"
-                          data-testid="input-kick-username"
-                        />
-                      </div>
-                      
-                      <Button 
-                        className="w-full font-display bg-[#53fc18] hover:bg-[#53fc18]/80 text-black"
-                        disabled={!kickUsername}
-                        onClick={() => setKickSaved(true)}
-                        data-testid="button-verify-kick"
-                      >
-                        <Check className="mr-2 w-5 h-5" /> Verify Kick Account
-                      </Button>
-                      
-                      <p className="text-xs text-muted-foreground">
-                        Make sure you're following GETSOME on Kick before verifying
-                      </p>
-                      
-                      <Button variant="link" className="text-[#53fc18]">
-                        <ExternalLink className="w-4 h-4 mr-2" /> Follow on Kick
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="wallets">
-              <div className="space-y-4">
-                <div className="flex items-center justify-between mb-6">
-                  <div>
-                    <h2 className="font-display text-xl font-bold text-white">SOL Wallet Addresses</h2>
-                    <p className="text-sm text-muted-foreground">Add your Solana wallet address for each casino and upload a screenshot for verification</p>
-                  </div>
-                </div>
-
-                {casinos.map((casino, i) => (
-                  <motion.div
-                    key={casino.id}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.05 }}
-                  >
-                    <Card className="glass p-6" data-testid={`card-wallet-${casino.id}`}>
-                      <div className="flex items-center gap-3 mb-4">
-                        <div 
-                          className="w-10 h-10 rounded-lg flex items-center justify-center font-display font-bold text-white text-sm"
-                          style={{ backgroundColor: casino.color }}
-                        >
-                          {casino.name.slice(0, 2)}
-                        </div>
-                        <h3 className="font-display font-bold text-white">{casino.name}</h3>
-                        {savedWallets[casino.id] && (
-                          <Badge className="bg-green-500/20 text-green-400 ml-auto">
-                            <Check className="w-3 h-3 mr-1" /> Verified
-                          </Badge>
-                        )}
-                      </div>
-
-                      <div className="space-y-4">
-                        <div>
-                          <Label className="text-xs text-muted-foreground mb-1 block">SOL Wallet Address</Label>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="grid gap-2">
+                          <Label>Casino Username</Label>
                           <Input
-                            placeholder="Enter your Solana wallet address"
-                            value={walletInputs[casino.id]?.address || ""}
-                            onChange={(e) => handleWalletChange(casino.id, e.target.value)}
-                            className="bg-white/5 border-white/10 font-mono text-sm"
-                            disabled={savedWallets[casino.id]}
-                            data-testid={`input-wallet-${casino.id}`}
+                            value={inputs.username}
+                            onChange={(e) => setCasinoInputs((p) => ({ ...p, [casino.id]: { ...inputs, username: e.target.value } }))}
+                            placeholder="Your casino username"
+                            disabled={!isEditing}
+                          />
+                        </div>
+                        <div className="grid gap-2">
+                          <Label>OD / User ID</Label>
+                          <Input
+                            value={inputs.odId}
+                            onChange={(e) => setCasinoInputs((p) => ({ ...p, [casino.id]: { ...inputs, odId: e.target.value } }))}
+                            placeholder="The ID shown on the casino"
+                            disabled={!isEditing}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-end gap-2">
+                        {existing && isEditing && (
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              setCasinoInputs((p) => ({
+                                ...p,
+                                [casino.id]: { username: existing.username ?? "", odId: existing.odId ?? "" },
+                              }));
+                              setCasinoEditing((p) => ({ ...p, [casino.id]: false }));
+                            }}
+                          >
+                            Cancel
+                          </Button>
+                        )}
+                        <Button
+                          onClick={() => saveCasinoAccountMutation.mutate(casino.id)}
+                          disabled={saveCasinoAccountMutation.isPending}
+                          className="min-w-32"
+                        >
+                          {saveCasinoAccountMutation.isPending ? (
+                            <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Saving</span>
+                          ) : existing ? (
+                            "Save changes"
+                          ) : (
+                            "Save"
+                          )}
+                        </Button>
+                      </div>
+
+                      {existing && !existing.verified && (
+                        <p className="text-xs text-muted-foreground">
+                          Changes reset verification. An admin will review and verify your details.
+                        </p>
+                      )}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Wallets */}
+      <Card>
+        <CardHeader>
+          <CardTitle>SOL Wallet Proofs</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {activeCasinos.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No casinos yet.</p>
+          ) : (
+            <div className="grid gap-4">
+              {activeCasinos.map((casino) => {
+                const existing = walletExisting[casino.id];
+                const isEditing = walletEditing[casino.id] || !existing;
+                const inputs = walletInputs[casino.id] || { solAddress: "", file: null };
+
+                return (
+                  <Card key={casino.id} className="border-muted">
+                    <CardContent className="p-4 space-y-4">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          {casino.logo ? (
+                            <img src={casino.logo} alt={casino.name} className="h-10 w-10 rounded-full object-cover" />
+                          ) : (
+                            <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center text-xs font-bold">
+                              {casino.name.slice(0, 2).toUpperCase()}
+                            </div>
+                          )}
+                          <div>
+                            <div className="font-medium">{casino.name}</div>
+                            <div className="text-xs text-muted-foreground">Submit a SOL address + proof screenshot for payouts.</div>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          {existing ? statusBadge(Boolean(existing.verified)) : <Badge variant="outline">Not submitted</Badge>}
+                          {existing && !isEditing && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setWalletEditing((p) => ({ ...p, [casino.id]: true }))}
+                              className="gap-1"
+                            >
+                              <Pencil className="h-4 w-4" /> Edit
+                            </Button>
+                          )}
+                          {existing && (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => deleteWalletMutation.mutate(casino.id)}
+                              disabled={deleteWalletMutation.isPending}
+                              className="gap-1"
+                            >
+                              <Trash2 className="h-4 w-4" /> Remove
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      <Separator />
+
+                      <div className="grid gap-4">
+                        <div className="grid gap-2">
+                          <Label>SOL Wallet Address</Label>
+                          <Input
+                            value={inputs.solAddress}
+                            onChange={(e) => setWalletInputs((p) => ({ ...p, [casino.id]: { ...inputs, solAddress: e.target.value } }))}
+                            placeholder="Your SOL address"
+                            disabled={!isEditing}
                           />
                         </div>
 
-                        <div>
-                          <Label className="text-xs text-muted-foreground mb-2 block">Wallet Screenshot</Label>
-                          {savedWallets[casino.id] ? (
-                            <div className="border border-green-500/30 bg-green-500/10 rounded-lg p-4 text-center">
-                              <Check className="w-8 h-8 text-green-400 mx-auto mb-2" />
-                              <p className="text-sm text-green-400">Screenshot uploaded</p>
-                            </div>
-                          ) : (
-                            <label 
-                              className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-white/20 rounded-lg cursor-pointer hover:border-neon-purple/50 transition-colors bg-white/5"
-                              data-testid={`upload-wallet-${casino.id}`}
-                            >
-                              <div className="flex flex-col items-center justify-center pt-5 pb-6">
-                                <Upload className="w-8 h-8 text-muted-foreground mb-2" />
-                                <p className="text-sm text-muted-foreground">
-                                  {walletInputs[casino.id]?.file ? (
-                                    <span className="text-neon-cyan">{walletInputs[casino.id].file?.name}</span>
-                                  ) : (
-                                    <>Click to upload or drag and drop</>
-                                  )}
-                                </p>
-                                <p className="text-xs text-muted-foreground mt-1">PNG, JPG up to 5MB</p>
-                              </div>
-                              <input 
-                                type="file" 
-                                className="hidden" 
-                                accept="image/*"
-                                onChange={(e) => handleFileUpload(casino.id, e.target.files?.[0] || null)}
-                              />
-                            </label>
-                          )}
+                        <div className="grid gap-2">
+                          <Label>Proof Screenshot</Label>
+                          <div className="flex flex-col gap-2">
+                            {(Boolean((existing as any)?.hasProof) || Boolean((existing as any)?.screenshotUrl)) ? (
+                              <p className="text-sm text-muted-foreground">Proof uploaded (admin-only).</p>
+                            ) : (
+                              <p className="text-sm text-muted-foreground">No proof uploaded yet.</p>
+                            )}
+<Input
+                              type="file"
+                              accept="image/*"
+                              disabled={!isEditing}
+                              onChange={(e) => {
+                                const file = e.target.files?.[0] || null;
+                                setWalletInputs((p) => ({ ...p, [casino.id]: { ...inputs, file } }));
+                              }}
+                            />
+                            {isEditing && (
+                              <p className="text-xs text-muted-foreground">
+                                {existing ? "Upload a new screenshot to replace the current proof." : "Upload a screenshot showing your SOL address."}
+                              </p>
+                            )}
+                          </div>
                         </div>
 
-                        {!savedWallets[casino.id] && (
-                          <Button 
-                            className="w-full font-display bg-gradient-to-r from-neon-purple to-neon-cyan hover:opacity-90"
-                            onClick={() => saveWallet(casino.id)}
-                            disabled={!walletInputs[casino.id]?.address || !walletInputs[casino.id]?.file}
-                            data-testid={`button-save-wallet-${casino.id}`}
+                        <div className="flex items-center justify-end gap-2">
+                          {existing && isEditing && (
+                            <Button
+                              variant="outline"
+                              onClick={() => {
+                                setWalletInputs((p) => ({
+                                  ...p,
+                                  [casino.id]: { solAddress: existing.solAddress ?? "", file: null },
+                                }));
+                                setWalletEditing((p) => ({ ...p, [casino.id]: false }));
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                          )}
+                          <Button
+                            onClick={() => saveWalletMutation.mutate(casino.id)}
+                            disabled={saveWalletMutation.isPending || (!isEditing && Boolean(existing))}
+                            className="min-w-32"
                           >
-                            <Wallet className="mr-2 w-4 h-4" /> Save Wallet
+                            {saveWalletMutation.isPending ? (
+                              <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Saving</span>
+                            ) : existing ? (
+                              "Save changes"
+                            ) : (
+                              "Save"
+                            )}
                           </Button>
+                        </div>
+
+                        {existing && !existing.verified && (
+                          <p className="text-xs text-muted-foreground">
+                            Changes reset verification. An admin will review and verify your payout details.
+                          </p>
                         )}
                       </div>
-                    </Card>
-                  </motion.div>
-                ))}
-              </div>
-            </TabsContent>
-          </Tabs>
-
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.3 }}
-            className="mt-8 p-4 bg-neon-gold/10 border border-neon-gold/30 rounded-lg"
-          >
-            <p className="text-sm text-neon-gold text-center">
-              ⚠️ This is a mockup. To save data permanently, upgrade to a full application with database support.
-            </p>
-          </motion.div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
         </div>
       </div>
+      <Footer />
     </div>
   );
 }

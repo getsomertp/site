@@ -5,25 +5,41 @@ import { Link } from "wouter";
 import { Card } from "@/components/ui/card";
 import { getQueryFn } from "@/lib/queryClient";
 import { normalizeExternalUrl } from "@/lib/url";
+import { RecentWinnersMini } from "@/components/RecentWinnersMini";
+import { GiveawayRulesModal } from "@/components/GiveawayRulesModal";
 
-type SiteSetting = {
-  key: string;
-  value: string;
-};
+type SiteSettingRow = { key: string; value: string };
+type SiteSettingsMap = Record<string, string>;
 
-function getSetting(settings: SiteSetting[] | undefined, key: string): string {
-  const row = (settings || []).find((s) => s.key === key);
-  return row?.value || "";
+// Public endpoint returns a map (Record<string,string>) while the admin endpoint returns rows.
+// Be resilient to either shape to avoid runtime crashes.
+function getSetting(settings: unknown, key: string): string {
+  if (!settings) return "";
+
+  if (Array.isArray(settings)) {
+    const row = (settings as SiteSettingRow[]).find((s) => s?.key === key);
+    return typeof row?.value === "string" ? row.value : "";
+  }
+
+  if (typeof settings === "object") {
+    const v = (settings as SiteSettingsMap)[key as keyof SiteSettingsMap];
+    return typeof v === "string" ? v : v == null ? "" : String(v);
+  }
+
+  return "";
 }
 
 export function Footer() {
-  const { data: settings } = useQuery<SiteSetting[]>({
+  const { data: settingsRaw } = useQuery<SiteSettingsMap | SiteSettingRow[] | null>({
     queryKey: ["/api/site/settings"],
-    queryFn: getQueryFn({ on401: "throw" }),
+    // Public endpoint, but be resilient if an upstream layer returns 401.
+    queryFn: getQueryFn({ on401: "returnNull" }),
     staleTime: 60_000,
     refetchOnWindowFocus: false,
     retry: false,
   });
+
+  const settings = settingsRaw || {};
 
   const kick = normalizeExternalUrl(getSetting(settings, "kickUrl"));
   const discord = normalizeExternalUrl(getSetting(settings, "discordUrl"));
@@ -34,6 +50,10 @@ export function Footer() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
         <motion.div initial={{ opacity: 0, y: 6 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
           <Card className="glass p-6">
+            <div className="mb-6">
+              <RecentWinnersMini limit={3} />
+            </div>
+
             <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-8">
               <div>
                 <div className="font-display font-bold text-white text-xl">GETSOME</div>
@@ -45,36 +65,45 @@ export function Footer() {
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-6 text-sm">
                 <div className="space-y-2">
                   <div className="font-display text-white/80 uppercase tracking-wider text-xs">Site</div>
-                  <div className="space-y-1">
-                    <Link href="/giveaways"><span className="text-white/70 hover:text-white cursor-pointer">Giveaways</span></Link>
-                    <Link href="/leaderboard"><span className="text-white/70 hover:text-white cursor-pointer">Leaderboards</span></Link>
-                    <Link href="/stream-games"><span className="text-white/70 hover:text-white cursor-pointer">Stream Games</span></Link>
+                  <div className="flex flex-col gap-1">
+                    <Link href="/giveaways"><span className="block text-white/70 hover:text-white cursor-pointer">Giveaways</span></Link>
+                    <Link href="/winners"><span className="block text-white/70 hover:text-white cursor-pointer">Winners</span></Link>
+                    <Link href="/partners"><span className="block text-white/70 hover:text-white cursor-pointer">Partners</span></Link>
+                    <Link href="/leaderboard"><span className="block text-white/70 hover:text-white cursor-pointer">Leaderboards</span></Link>
+                    <Link href="/stream-games"><span className="block text-white/70 hover:text-white cursor-pointer">Stream Games</span></Link>
+                    <div>
+                      <GiveawayRulesModal
+                        variant="ghost"
+                        className="p-0 h-auto font-normal justify-start text-white/70 hover:text-white"
+                        triggerText="Giveaway Rules"
+                      />
+                    </div>
                   </div>
                 </div>
 
                 <div className="space-y-2">
                   <div className="font-display text-white/80 uppercase tracking-wider text-xs">Account</div>
-                  <div className="space-y-1">
-                    <Link href="/profile"><span className="text-white/70 hover:text-white cursor-pointer">Profile</span></Link>
-                    <Link href="/affiliates"><span className="text-white/70 hover:text-white cursor-pointer">Affiliates</span></Link>
+                  <div className="flex flex-col gap-1">
+                    <Link href="/profile"><span className="block text-white/70 hover:text-white cursor-pointer">Profile</span></Link>
+                    <Link href="/affiliates"><span className="block text-white/70 hover:text-white cursor-pointer">Affiliates</span></Link>
                   </div>
                 </div>
 
                 <div className="space-y-2">
                   <div className="font-display text-white/80 uppercase tracking-wider text-xs">Social</div>
-                  <div className="space-y-1">
+                  <div className="flex flex-col gap-1">
                     {kick && (
-                      <a className="inline-flex items-center gap-2 text-white/70 hover:text-white" href={kick} target="_blank" rel="noopener noreferrer">
+                      <a className="flex items-center gap-2 text-white/70 hover:text-white" href={kick} target="_blank" rel="noopener noreferrer">
                         Kick <ExternalLink className="h-4 w-4 opacity-70" />
                       </a>
                     )}
                     {discord && (
-                      <a className="inline-flex items-center gap-2 text-white/70 hover:text-white" href={discord} target="_blank" rel="noopener noreferrer">
+                      <a className="flex items-center gap-2 text-white/70 hover:text-white" href={discord} target="_blank" rel="noopener noreferrer">
                         Discord <ExternalLink className="h-4 w-4 opacity-70" />
                       </a>
                     )}
                     {x && (
-                      <a className="inline-flex items-center gap-2 text-white/70 hover:text-white" href={x} target="_blank" rel="noopener noreferrer">
+                      <a className="flex items-center gap-2 text-white/70 hover:text-white" href={x} target="_blank" rel="noopener noreferrer">
                         X <ExternalLink className="h-4 w-4 opacity-70" />
                       </a>
                     )}

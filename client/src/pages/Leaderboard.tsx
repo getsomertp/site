@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
+import { useSeo } from "@/lib/seo";
 import { normalizeExternalUrl } from "@/lib/url";
 import type { Casino } from "@shared/schema";
 
@@ -70,6 +71,11 @@ function formatTimeRemaining(iso?: string) {
 }
 
 export default function Leaderboard() {
+  useSeo({
+    title: "Leaderboard",
+    description: "View partner leaderboards and track the top players.",
+    path: "/leaderboard",
+  });
   const [period, setPeriod] = useState("monthly");
   const [selectedCasinoSlug, setSelectedCasinoSlug] = useState<string>("");
 
