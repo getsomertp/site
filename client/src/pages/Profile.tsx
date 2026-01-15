@@ -14,6 +14,7 @@ import { Progress } from "@/components/ui/progress";
 import { Loader2, CheckCircle2, Clock, Pencil, Trash2, ExternalLink } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
+import { useSeo } from "@/lib/seo";
 
 import type { Casino, UserCasinoAccount, UserWallet } from "@shared/schema";
 
@@ -40,6 +41,11 @@ function statusBadge(verified: boolean) {
 }
 
 export default function Profile() {
+  useSeo({
+    title: "Profile",
+    description: "Manage your linked casino accounts, wallet proof, and verification status.",
+    path: "/profile",
+  });
   const { toast } = useToast();
   const queryClient = useQueryClient();
 

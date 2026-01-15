@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { Crown, Sparkles } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
+import { useSeo } from "@/lib/seo";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,6 +34,11 @@ function initials(name: string) {
 }
 
 export default function Winners() {
+  useSeo({
+    title: "Winners",
+    description: "Recent giveaway winners announced on stream.",
+    path: "/winners",
+  });
   const { data: winnersRaw, isLoading } = useQuery<WinnerRow[]>({
     queryKey: ["/api/giveaways/winners", 50],
     queryFn: async () => {

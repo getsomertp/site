@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
+import { useSeo } from "@/lib/seo";
 import { GiveawayRulesModal } from "@/components/GiveawayRulesModal";
 import type { Casino, Giveaway, GiveawayRequirement } from "@shared/schema";
 
@@ -37,6 +38,11 @@ function parseRequireVerified(value: unknown): boolean {
 }
 
 export default function Giveaways() {
+  useSeo({
+    title: "Giveaways",
+    description: "Enter active giveaways and see previous winners.",
+    path: "/giveaways",
+  });
   const [filter, setFilter] = useState<"all" | "active" | "ended">("all");
 
   const queryClient = useQueryClient();

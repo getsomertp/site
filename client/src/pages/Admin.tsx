@@ -37,6 +37,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Badge } from "@/components/ui/badge";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
+import { useSeo } from "@/lib/seo";
 import { StreamEvents } from "@/components/StreamEvents";
 import { useToast } from "@/hooks/use-toast";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -273,6 +274,11 @@ function AdminLogin({ onLogin }: { onLogin: () => void }) {
 }
 
 export default function Admin() {
+  useSeo({
+    title: "Admin",
+    description: "Manage casinos, giveaways, users, and site settings.",
+    path: "/admin",
+  });
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);

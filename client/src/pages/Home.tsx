@@ -11,6 +11,7 @@ import heroBg from "@assets/generated_images/dark_neon_casino_background.png";
 import { normalizeExternalUrl } from "@/lib/url";
 import { useSession } from "@/hooks/useSession";
 import { useToast } from "@/hooks/use-toast";
+import { useSeo } from "@/lib/seo";
 import type { Giveaway, GiveawayRequirement } from "@shared/schema";
 
 type Casino = {
@@ -87,6 +88,11 @@ function formatTimeRemaining(endsAt: Date | string): string {
 }
 
 export default function Home() {
+  useSeo({
+    title: "Stream Hub",
+    description: "Live giveaways, partner leaderboards, and stream games — connect with Discord and join the community.",
+    path: "/",
+  });
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: session } = useSession();
@@ -219,29 +225,85 @@ export default function Home() {
         </div>
 
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-20 pb-14">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-3xl">
-            <h1 className="font-display text-4xl md:text-6xl font-bold text-white leading-tight">
-              GETSOME Stream Hub
-            </h1>
-            <p className="mt-4 text-lg text-muted-foreground">
-              Live giveaways, leaderboards, and stream games — all in one place.
-            </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Button asChild>
-                <a href={kickUrl} target="_blank" rel="noreferrer">
-                  Watch Live <ExternalLink className="ml-2 w-4 h-4" />
-                </a>
-              </Button>
-              <Button variant="outline" asChild>
-                <a href={discordUrl} target="_blank" rel="noreferrer">
-                  Join Discord <ExternalLink className="ml-2 w-4 h-4" />
-                </a>
-              </Button>
-              <Button variant="secondary" asChild>
-                <a href="/stream-games">Stream Games</a>
-              </Button>
-            </div>
-          </motion.div>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="lg:col-span-7"
+            >
+              <h1 className="font-display text-4xl md:text-6xl font-bold text-white leading-tight">
+                GETSOME Stream Hub
+              </h1>
+              <p className="mt-4 text-lg text-muted-foreground">
+                Live giveaways, leaderboards, and stream games — all in one place.
+              </p>
+              <div className="mt-8 flex flex-wrap gap-3">
+                <Button asChild>
+                  <a href={kickUrl} target="_blank" rel="noreferrer">
+                    Watch Live <ExternalLink className="ml-2 w-4 h-4" />
+                  </a>
+                </Button>
+                <Button variant="outline" asChild>
+                  <a href={discordUrl} target="_blank" rel="noreferrer">
+                    Join Discord <ExternalLink className="ml-2 w-4 h-4" />
+                  </a>
+                </Button>
+                <Button variant="secondary" asChild>
+                  <a href="/stream-games">Stream Games</a>
+                </Button>
+              </div>
+            </motion.div>
+
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.08 }}
+              className="lg:col-span-5"
+            >
+              <Card className="glass p-6">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-display text-white font-semibold">Recent Winners</div>
+                    <div className="text-xs text-white/60">Fresh wins announced on stream</div>
+                  </div>
+                  <Button variant="outline" size="sm" asChild className="border-white/15 text-white hover:bg-white/5">
+                    <a href="/winners">View all</a>
+                  </Button>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {showNoWinners ? (
+                    <div className="text-sm text-white/60">No winners yet — check back after the first giveaway ends.</div>
+                  ) : (
+                    winnersToShow.map((w) => (
+                      <div key={w.id} className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white flex-shrink-0">
+                          {w.winner?.discordAvatarUrl ? (
+                            <img src={w.winner.discordAvatarUrl} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            (w.winner?.discordUsername || w.winner?.kickUsername || "?").slice(0, 1).toUpperCase()
+                          )}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-white font-semibold truncate">
+                              {w.winner?.discordUsername || w.winner?.kickUsername || "Winner"}
+                            </div>
+                            <div className="text-xs text-white/50 flex-shrink-0">
+                              {w.endsAt ? new Date(w.endsAt as any).toLocaleDateString() : ""}
+                            </div>
+                          </div>
+                          <div className="text-xs text-white/60 truncate">
+                            {w.title} • <span className="text-neon-gold font-semibold">{w.prize}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </Card>
+            </motion.div>
+          </div>
 
           {/* Stats */}
           <div className="mt-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -292,6 +354,9 @@ export default function Home() {
             <h2 className="text-2xl font-bold text-white">Casino Partners</h2>
             <p className="text-muted-foreground">Use the official links to support the stream.</p>
           </div>
+          <Button variant="outline" asChild>
+            <a href="/partners">View All</a>
+          </Button>
         </div>
 
         <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

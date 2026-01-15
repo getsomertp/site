@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { useSeo } from "@/lib/seo";
 
 type StreamEvent = {
   id: number;
@@ -28,6 +29,11 @@ type StreamEvent = {
 };
 
 export default function StreamGames() {
+  useSeo({
+    title: "Stream Games",
+    description: "Enter live stream events and view finished games.",
+    path: "/stream-games",
+  });
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [slotByEvent, setSlotByEvent] = useState<Record<number, string>>({});

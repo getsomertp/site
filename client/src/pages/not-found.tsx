@@ -5,8 +5,10 @@ import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { useSeo } from "@/lib/seo";
 
 export default function NotFound() {
+  useSeo({ title: "Not Found", description: "Page not found.", path: window.location.pathname });
   return (
     <div className="min-h-screen">
       <Navigation />

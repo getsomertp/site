@@ -68,6 +68,7 @@ export function Footer() {
                   <div className="space-y-1">
                     <Link href="/giveaways"><span className="text-white/70 hover:text-white cursor-pointer">Giveaways</span></Link>
                     <Link href="/winners"><span className="text-white/70 hover:text-white cursor-pointer">Winners</span></Link>
+                    <Link href="/partners"><span className="text-white/70 hover:text-white cursor-pointer">Partners</span></Link>
                     <Link href="/leaderboard"><span className="text-white/70 hover:text-white cursor-pointer">Leaderboards</span></Link>
                     <Link href="/stream-games"><span className="text-white/70 hover:text-white cursor-pointer">Stream Games</span></Link>
                     <div>

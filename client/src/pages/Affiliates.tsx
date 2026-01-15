@@ -8,6 +8,7 @@ import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeExternalUrl } from "@/lib/url";
+import { useSeo } from "@/lib/seo";
 import type { Casino } from "@shared/schema";
 
 const benefits = [
@@ -60,6 +61,11 @@ function getTierStyles(tier: string) {
 }
 
 export default function Affiliates() {
+  useSeo({
+    title: "Affiliates",
+    description: "Exclusive bonuses and maximum rakeback through trusted partners.",
+    path: "/affiliates",
+  });
   const { toast } = useToast();
 
   const { data: casinos = [], isLoading } = useQuery<Casino[]>({
