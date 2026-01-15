@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
+import { GiveawayRulesModal } from "@/components/GiveawayRulesModal";
 import heroBg from "@assets/generated_images/dark_neon_casino_background.png";
 import { normalizeExternalUrl } from "@/lib/url";
 import { useSession } from "@/hooks/useSession";
@@ -351,9 +352,12 @@ export default function Home() {
             <p className="text-muted-foreground">Active giveaways running on stream.</p>
           </div>
 
-          <Button variant="outline" asChild>
-            <a href="/giveaways">View All</a>
-          </Button>
+          <div className="flex items-center gap-2">
+            <GiveawayRulesModal variant="outline" className="border-white/15 text-white hover:bg-white/5" />
+            <Button variant="outline" asChild>
+              <a href="/giveaways">View All</a>
+            </Button>
+          </div>
         </div>
 
         <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">

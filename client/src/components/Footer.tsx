@@ -5,6 +5,8 @@ import { Link } from "wouter";
 import { Card } from "@/components/ui/card";
 import { getQueryFn } from "@/lib/queryClient";
 import { normalizeExternalUrl } from "@/lib/url";
+import { RecentWinnersMini } from "@/components/RecentWinnersMini";
+import { GiveawayRulesModal } from "@/components/GiveawayRulesModal";
 
 type SiteSettingRow = { key: string; value: string };
 type SiteSettingsMap = Record<string, string>;
@@ -48,6 +50,10 @@ export function Footer() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
         <motion.div initial={{ opacity: 0, y: 6 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: true }}>
           <Card className="glass p-6">
+            <div className="mb-6">
+              <RecentWinnersMini limit={3} />
+            </div>
+
             <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-8">
               <div>
                 <div className="font-display font-bold text-white text-xl">GETSOME</div>
@@ -61,8 +67,16 @@ export function Footer() {
                   <div className="font-display text-white/80 uppercase tracking-wider text-xs">Site</div>
                   <div className="space-y-1">
                     <Link href="/giveaways"><span className="text-white/70 hover:text-white cursor-pointer">Giveaways</span></Link>
+                    <Link href="/winners"><span className="text-white/70 hover:text-white cursor-pointer">Winners</span></Link>
                     <Link href="/leaderboard"><span className="text-white/70 hover:text-white cursor-pointer">Leaderboards</span></Link>
                     <Link href="/stream-games"><span className="text-white/70 hover:text-white cursor-pointer">Stream Games</span></Link>
+                    <div>
+                      <GiveawayRulesModal
+                        variant="ghost"
+                        className="p-0 h-auto font-normal justify-start text-white/70 hover:text-white"
+                        triggerText="Giveaway Rules"
+                      />
+                    </div>
                   </div>
                 </div>
 

@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import Home from "@/pages/Home";
 import Leaderboard from "@/pages/Leaderboard";
 import Giveaways from "@/pages/Giveaways";
+import Winners from "@/pages/Winners";
 import Affiliates from "@/pages/Affiliates";
 import Profile from "@/pages/Profile";
 import StreamGames from "@/pages/StreamGames";
@@ -20,6 +21,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/leaderboard" component={Leaderboard} />
       <Route path="/giveaways" component={Giveaways} />
+      <Route path="/winners" component={Winners} />
       <Route path="/affiliates" component={Affiliates} />
       <Route path="/profile" component={Profile} />
       <Route path="/stream-games" component={StreamGames} />

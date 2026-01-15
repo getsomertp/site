@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
+import { GiveawayRulesModal } from "@/components/GiveawayRulesModal";
 import type { Casino, Giveaway, GiveawayRequirement } from "@shared/schema";
 
 type WinnerSummary = {
@@ -243,18 +244,25 @@ export default function Giveaways() {
             </Card>
           )}
 
-          <div className="flex gap-2 mb-8">
-            {(["all", "active", "ended"] as const).map((f) => (
-              <Button
-                key={f}
-                variant={filter === f ? "default" : "outline"}
-                className={`font-display capitalize ${filter === f ? "bg-neon-purple" : ""}`}
-                onClick={() => setFilter(f)}
-                data-testid={`filter-${f}`}
-              >
-                {f}
-              </Button>
-            ))}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-8">
+            <div className="flex gap-2">
+              {(["all", "active", "ended"] as const).map((f) => (
+                <Button
+                  key={f}
+                  variant={filter === f ? "default" : "outline"}
+                  className={`font-display capitalize ${filter === f ? "bg-neon-purple" : ""}`}
+                  onClick={() => setFilter(f)}
+                  data-testid={`filter-${f}`}
+                >
+                  {f}
+                </Button>
+              ))}
+            </div>
+
+            <GiveawayRulesModal
+              variant="outline"
+              className="font-display border-white/15 text-white hover:bg-white/5"
+            />
           </div>
 
           {isLoading ? (
