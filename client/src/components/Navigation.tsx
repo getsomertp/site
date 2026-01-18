@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, X, Trophy, Gift, Handshake, LogIn, Settings, Zap, User, Crown, Building2, ChevronDown, LogOut } from "lucide-react";
+import { Menu, X, Trophy, Gift, Handshake, LogIn, Settings, Zap, User, Crown, Building2, ChevronDown, LogOut, RefreshCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -13,6 +13,8 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { getQueryFn } from "@/lib/queryClient";
 import { useSession } from "@/hooks/useSession";
+import { clearClientCacheAndReload } from "@/lib/clearClientCache";
+import { clearClientCacheAndReload } from "@/lib/clearClientCache";
 
 type AdminMe = { isAdmin: boolean };
 
@@ -175,6 +177,11 @@ export function Navigation() {
                       </DropdownMenuItem>
                     </Link>
                   ) : null}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="cursor-pointer" onClick={() => void clearClientCacheAndReload()}>
+                    <RefreshCcw className="w-4 h-4" />
+                    <span>Clear cache & reload</span>
+                  </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem className="cursor-pointer" onClick={logoutAll}>
                     <LogOut className="w-4 h-4" />

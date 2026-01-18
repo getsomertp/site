@@ -437,8 +437,10 @@ app.get("/api/public/files/:key(*)", async (req: Request, res: Response) => {
     const key = decodeURIComponent(rawKey).replace(/\\/g, "/");
     if (!key || key.includes("..")) return res.status(400).json({ error: "Bad key" });
 
-    // Public assets only (casino logos). Everything else should use an auth-gated route.
-    if (!key.startsWith("casinos/")) {
+    // Public assets only. Everything else should use an auth-gated route.
+    // - casinos/: partner logos
+    // - site/: header logo + background theme image
+    if (!(key.startsWith("casinos/") || key.startsWith("site/"))) {
       return res.status(404).json({ error: "Not found" });
     }
 
