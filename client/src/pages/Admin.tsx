@@ -767,7 +767,7 @@ const deleteLeaderboard = useMutation({
     <div className="min-h-screen">
       <Navigation />
       
-      <div className="pt-28 pb-24">
+      <div className="pt-24 sm:pt-28 pb-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div 
             className="text-center mb-12"
@@ -2216,7 +2216,7 @@ function VerificationsTab() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => verifyCasinoAccount.mutate(a.id)}
+                          onClick={() => verifyCasinoAccount.mutate({ id: a.id, verified: true })}
                           disabled={verifyCasinoAccount.isPending}
                         >
                           Verify
@@ -2285,7 +2285,7 @@ function VerificationsTab() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => verifyWallet.mutate(w.id)}
+                          onClick={() => verifyWallet.mutate({ id: w.id, verified: true })}
                           disabled={verifyWallet.isPending}
                         >
                           Verify
@@ -2535,7 +2535,7 @@ function PlayersTab({ casinos, canManagePayments }: { casinos: Casino[]; canMana
                                 </Button>
                               )}
                               <Badge className={account.verified ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400"}>
-                                {account.verified ? "Verified" : "Pending"}
+                                {account.verified ? "Verified" : "Pending verification"}
                               </Badge>
                             </div>
                           </div>
@@ -2596,7 +2596,7 @@ function PlayersTab({ casinos, canManagePayments }: { casinos: Casino[]; canMana
                                 </Button>
                               )}
                               <Badge className={wallet.verified ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400"}>
-                                {wallet.verified ? "Verified" : "Pending"}
+                                {wallet.verified ? "Verified" : "Pending verification"}
                               </Badge>
                             </div>
                           </div>

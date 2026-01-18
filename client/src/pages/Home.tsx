@@ -1,12 +1,15 @@
 import { motion } from "framer-motion";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
-import { Trophy, Gift, Users, Zap, ExternalLink } from "lucide-react";
+import { Trophy, Gift, Users, Zap, ExternalLink, Building2, Crown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { GiveawayRulesModal } from "@/components/GiveawayRulesModal";
+import { EmptyState } from "@/components/EmptyState";
+import { SkeletonGrid } from "@/components/SkeletonBlocks";
 import heroBg from "@assets/generated_images/dark_neon_casino_background.png";
 import { normalizeExternalUrl } from "@/lib/url";
 import { useSession } from "@/hooks/useSession";
@@ -94,12 +97,12 @@ export default function Home() {
     window.location.href = "/api/auth/discord";
   };
 
-  const { data: casinos = [] } = useQuery<Casino[]>({
+  const { data: casinos = [], isLoading: casinosLoading } = useQuery<Casino[]>({
     queryKey: ["/api/casinos"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
-  const { data: giveaways = [] } = useQuery<GiveawayWithDetails[]>({
+  const { data: giveaways = [], isLoading: giveawaysLoading } = useQuery<GiveawayWithDetails[]>({
     queryKey: ["/api/giveaways/active"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
@@ -163,7 +166,7 @@ export default function Home() {
     },
   });
 
-  const { data: siteSettingsRaw } = useQuery<Record<string, string> | null>({
+  const { data: siteSettingsRaw, isLoading: settingsLoading } = useQuery<Record<string, string> | null>({
     queryKey: ["/api/site/settings"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
@@ -171,16 +174,16 @@ export default function Home() {
   // Guard against null (e.g., if a proxy/auth layer returns 401).
   const siteSettings = (siteSettingsRaw as any) || {};
 
-  const { data: homeLb } = useQuery<HomeLeaderboard>({
+  const { data: homeLb, isLoading: homeLbLoading } = useQuery<HomeLeaderboard>({
     queryKey: ["/api/home/leaderboard"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
   const activeCasinos = (casinos || []).filter((c) => c.isActive !== false);
-  const showNoCasinos = activeCasinos.length === 0;
+  const showNoCasinos = !casinosLoading && activeCasinos.length === 0;
 
   const activeGiveaways = (giveaways || []).slice(0, 3);
-  const showNoGiveaways = activeGiveaways.length === 0;
+  const showNoGiveaways = !giveawaysLoading && activeGiveaways.length === 0;
 
 
   const kickUrl = siteSettings.kickUrl || "https://kick.com/get-some";
@@ -240,39 +243,55 @@ export default function Home() {
 
           {/* Stats */}
           <div className="mt-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card className="p-5">
+            <Card className="glass p-5">
               <div className="flex items-center gap-3">
                 <Users className="w-5 h-5" />
                 <div>
                   <div className="text-sm text-muted-foreground">Community</div>
-                  <div className="text-2xl font-bold">{communityMembers.toLocaleString()}</div>
+                  {settingsLoading ? (
+                    <Skeleton className="h-7 w-20" />
+                  ) : (
+                    <div className="text-2xl font-bold">{communityMembers.toLocaleString()}</div>
+                  )}
                 </div>
               </div>
             </Card>
-            <Card className="p-5">
+            <Card className="glass p-5">
               <div className="flex items-center gap-3">
                 <Gift className="w-5 h-5" />
                 <div>
                   <div className="text-sm text-muted-foreground">Given Away</div>
-                  <div className="text-2xl font-bold">{formatMoney(totalGivenAway)}</div>
+                  {settingsLoading ? (
+                    <Skeleton className="h-7 w-24" />
+                  ) : (
+                    <div className="text-2xl font-bold">{formatMoney(totalGivenAway)}</div>
+                  )}
                 </div>
               </div>
             </Card>
-            <Card className="p-5">
+            <Card className="glass p-5">
               <div className="flex items-center gap-3">
                 <Trophy className="w-5 h-5" />
                 <div>
                   <div className="text-sm text-muted-foreground">Winners</div>
-                  <div className="text-2xl font-bold">{totalWinners.toLocaleString()}</div>
+                  {settingsLoading ? (
+                    <Skeleton className="h-7 w-16" />
+                  ) : (
+                    <div className="text-2xl font-bold">{totalWinners.toLocaleString()}</div>
+                  )}
                 </div>
               </div>
             </Card>
-            <Card className="p-5">
+            <Card className="glass p-5">
               <div className="flex items-center gap-3">
                 <Zap className="w-5 h-5" />
                 <div>
                   <div className="text-sm text-muted-foreground">Live Hours</div>
-                  <div className="text-2xl font-bold">{liveHours.toLocaleString()}</div>
+                  {settingsLoading ? (
+                    <Skeleton className="h-7 w-14" />
+                  ) : (
+                    <div className="text-2xl font-bold">{liveHours.toLocaleString()}</div>
+                  )}
                 </div>
               </div>
             </Card>
@@ -292,17 +311,19 @@ export default function Home() {
           </Button>
         </div>
 
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {showNoCasinos ? (
-            <Card className="p-6">
-              <div className="text-white font-semibold">No casinos yet</div>
-              <div className="text-muted-foreground text-sm mt-1">
-                Add your first casino in the Admin panel and it will appear here.
-              </div>
-            </Card>
+        <div className="mt-6">
+          {casinosLoading ? (
+            <SkeletonGrid count={6} />
+          ) : showNoCasinos ? (
+            <EmptyState
+              icon={Building2}
+              title="No casino partners yet"
+              description="Once a casino is added in Admin, it will show up here automatically."
+            />
           ) : (
-            activeCasinos.slice(0, 6).map((c) => (
-              <Card key={c.id} className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {activeCasinos.slice(0, 6).map((c) => (
+              <Card key={c.id} className="glass p-6">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     {c.logo ? (
@@ -337,7 +358,8 @@ export default function Home() {
                   )}
                 </div>
               </Card>
-            ))
+              ))}
+            </div>
           )}
         </div>
       </section>
@@ -358,17 +380,19 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-          {showNoGiveaways ? (
-            <Card className="p-6 md:col-span-3">
-              <div className="text-white font-semibold">No active giveaways</div>
-              <div className="text-muted-foreground text-sm mt-1">
-                When a giveaway is created and activated, it will show up here automatically.
-              </div>
-            </Card>
+        <div className="mt-6">
+          {giveawaysLoading ? (
+            <SkeletonGrid count={3} />
+          ) : showNoGiveaways ? (
+            <EmptyState
+              icon={Gift}
+              title="No active giveaways"
+              description="When a giveaway is created and activated, it will appear here automatically."
+            />
           ) : (
-            activeGiveaways.map((g) => (
-              <Card key={g.id} className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {activeGiveaways.map((g) => (
+              <Card key={g.id} className="glass p-6">
                 <div className="text-white font-semibold">{g.title}</div>
                 <div className="mt-2 text-2xl font-bold text-neon-gold">
                   {g.prize}
@@ -425,7 +449,8 @@ export default function Home() {
                   )}
                 </div>
               </Card>
-            ))
+              ))}
+            </div>
           )}
         </div>
       </section>
@@ -448,15 +473,19 @@ export default function Home() {
         </div>
 
         <div className="mt-6">
-          {!hasLeaderboard ? (
-            <Card className="p-6">
-              <div className="text-white font-semibold">(no leaderboard yet)</div>
-              <div className="text-muted-foreground text-sm mt-1">
-                Add at least one casino leaderboard API in Admin to populate this section.
-              </div>
+          {homeLbLoading ? (
+            <Card className="glass p-6">
+              <Skeleton className="h-4 w-2/3" />
+              <Skeleton className="h-4 w-1/2 mt-3" />
             </Card>
+          ) : !hasLeaderboard ? (
+            <EmptyState
+              icon={Trophy}
+              title="(no leaderboard yet)"
+              description="Add at least one casino leaderboard API in Admin to populate this section."
+            />
           ) : (
-            <Card className="p-6">
+            <Card className="glass p-6">
               <div className="text-muted-foreground text-sm">
                 Leaderboard is available for <span className="text-white font-semibold">{lbCasino?.name}</span>. Click “View Full Leaderboard”.
               </div>

@@ -11,10 +11,15 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
-import { Loader2, CheckCircle2, Clock, Pencil, Trash2, ExternalLink } from "lucide-react";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Building2, Wallet, Loader2, CheckCircle2, Clock, Pencil, Trash2, ExternalLink } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { useSeo } from "@/lib/seo";
+
+import { EmptyState } from "@/components/EmptyState";
+import { SkeletonCard } from "@/components/SkeletonBlocks";
+import { VerificationBadge } from "@/components/VerificationBadge";
 
 import type { Casino, UserCasinoAccount, UserWallet } from "@shared/schema";
 
@@ -29,15 +34,7 @@ type ProfileResponse = {
 };
 
 function statusBadge(verified: boolean) {
-  return verified ? (
-    <Badge className="gap-1">
-      <CheckCircle2 className="h-3.5 w-3.5" /> Verified
-    </Badge>
-  ) : (
-    <Badge variant="secondary" className="gap-1">
-      <Clock className="h-3.5 w-3.5" /> Pending
-    </Badge>
-  );
+  return <VerificationBadge verified={verified} />;
 }
 
 export default function Profile() {
@@ -251,18 +248,16 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
     return (
       <div className="min-h-screen">
         <Navigation />
-        <div className="pt-28 pb-24">
+        <div className="pt-24 sm:pt-28 pb-24">
           <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8">
-            <Card className="glass">
-              <CardHeader>
-                <CardTitle>Profile</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-muted-foreground">
-                  Please log in to manage your casino accounts and wallets.
-                </p>
-              </CardContent>
-            </Card>
+            <EmptyState
+              title="Log in to view your profile"
+              description="Connect Discord to link casino accounts, upload wallet proof, and enter verified-only giveaways."
+              primaryAction={{
+                label: "Login with Discord",
+                onClick: () => (window.location.href = "/api/auth/discord"),
+              }}
+            />
           </div>
         </div>
         <Footer />
@@ -270,37 +265,66 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
     );
   }
 
+  const nextStep = !hasCasinoLink
+    ? { label: "Link a casino account", targetId: "casino-accounts" }
+    : !hasWalletProof
+      ? { label: "Upload wallet proof", targetId: "wallet-proofs" }
+      : !isVerified
+        ? { label: "Wait for verification", targetId: "profile-setup" }
+        : null;
+
   return (
     <div className="min-h-screen">
       <Navigation />
-      <div className="pt-28 pb-24">
+      <div className="pt-24 sm:pt-28 pb-24">
         <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 space-y-6">
-      <div className="flex items-center gap-4">
-        {profile?.discordAvatar ? (
-          <img
-            src={profile.discordAvatar}
-            alt="Avatar"
-            className="h-14 w-14 rounded-full border object-cover"
-            referrerPolicy="no-referrer"
-          />
-        ) : (
-          <div className="h-14 w-14 rounded-full border bg-muted" />
-        )}
-        <div className="flex-1">
-          <div className="text-xl font-semibold">{profile?.discordUsername || "User"}</div>
-          <div className="text-sm text-muted-foreground">Manage your casino accounts and wallet proofs.</div>
-        </div>
-        {loading ? (
-          <Badge variant="secondary" className="gap-1">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading
-          </Badge>
-        ) : (
-          <Badge variant="outline">Signed in</Badge>
-        )}
-      </div>
+          <div className="flex items-center gap-4">
+            {profileLoading ? (
+              <div className="h-14 w-14 rounded-full border border-white/10 bg-white/5" />
+            ) : profile?.discordAvatar ? (
+              <img
+                src={profile.discordAvatar}
+                alt="Avatar"
+                className="h-14 w-14 rounded-full border border-white/10 object-cover"
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <div className="h-14 w-14 rounded-full border border-white/10 bg-white/5" />
+            )}
+            <div className="flex-1 min-w-0">
+              <div className="text-xl sm:text-2xl font-semibold truncate">{profile?.discordUsername || "User"}</div>
+              <div className="text-sm text-white/60">Link casino accounts, add wallet proof, and track verification.</div>
+            </div>
+            {loading ? (
+              <Badge variant="secondary" className="gap-1">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading
+              </Badge>
+            ) : (
+              <Badge variant="outline">Signed in</Badge>
+            )}
+          </div>
+
+          {nextStep ? (
+            <Card className="glass p-4 sm:p-5 border-white/10">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-display text-sm uppercase tracking-wider text-white/60">Next step</div>
+                  <div className="text-white font-semibold">{nextStep.label}</div>
+                  <div className="text-sm text-white/60">Complete your profile to unlock verified-only giveaways.</div>
+                </div>
+                <Button
+                  variant="outline"
+                  className="font-display border-white/15 text-white hover:bg-white/5"
+                  onClick={() => document.getElementById(nextStep.targetId)?.scrollIntoView({ behavior: "smooth" })}
+                >
+                  Go
+                </Button>
+              </div>
+            </Card>
+          ) : null}
 
       {/* Kick */}
-      <Card>
+      <Card className="glass">
         <CardHeader>
           <CardTitle>Kick Username</CardTitle>
         </CardHeader>
@@ -329,7 +353,7 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
           </div>
 
           <div className="flex items-center gap-2">
-            {statusBadge(Boolean(profile?.kickVerified))}
+            <VerificationBadge verified={Boolean(profile?.kickVerified)} />
             <p className="text-sm text-muted-foreground">
               Admin verification may be required before payouts.
             </p>
@@ -338,8 +362,8 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
       </Card>
 
       
-{/* Profile setup */}
-<Card className="border-white/10 bg-card/60">
+	{/* Profile setup */}
+	<Card id="profile-setup" className="glass border-white/10 bg-card/60">
   <CardHeader>
     <CardTitle className="flex items-center justify-between">
       <span>Profile Setup</span>
@@ -355,9 +379,9 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
         <div>
           <div className="font-medium flex items-center gap-2">
             {hasCasinoLink ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <Clock className="h-4 w-4 text-muted-foreground" />}
-            Link at least one casino username
+	            1. Link at least one casino username
           </div>
-          <div className="text-sm text-muted-foreground">Required for casino-specific giveaways and verification checks.</div>
+	          <div className="text-sm text-muted-foreground">Required for casino-specific giveaways, entries, and checks.</div>
         </div>
         <Button variant="outline" size="sm" onClick={() => document.getElementById("casino-accounts")?.scrollIntoView({ behavior: "smooth" })}>
           Manage
@@ -368,9 +392,9 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
         <div>
           <div className="font-medium flex items-center gap-2">
             {hasWalletProof ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <Clock className="h-4 w-4 text-muted-foreground" />}
-            Add a wallet proof screenshot
+	            2. Add a wallet proof screenshot
           </div>
-          <div className="text-sm text-muted-foreground">Used for payouts and manual verification by the admin.</div>
+	          <div className="text-sm text-muted-foreground">Used for payouts and manual verification.</div>
         </div>
         <Button variant="outline" size="sm" onClick={() => document.getElementById("wallet-proofs")?.scrollIntoView({ behavior: "smooth" })}>
           Manage
@@ -381,27 +405,37 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
         <div>
           <div className="font-medium flex items-center gap-2">
             {isVerified ? <CheckCircle2 className="h-4 w-4 text-emerald-400" /> : <Clock className="h-4 w-4 text-muted-foreground" />}
-            Get verified
+	            3. Get verified
           </div>
           <div className="text-sm text-muted-foreground">
             {isVerified ? "You’re verified and eligible for verified-only giveaways." : "Waiting for admin verification once your info is submitted."}
           </div>
         </div>
-        <Badge variant={isVerified ? "secondary" : "outline"}>{isVerified ? "Verified" : "Pending"}</Badge>
+	        <Badge variant={isVerified ? "secondary" : "outline"}>{isVerified ? "Verified" : "Pending verification"}</Badge>
       </div>
     </div>
   </CardContent>
 </Card>
 
-{/* Casino accounts */}
-      <Card id="casino-accounts">
+	{/* Casino accounts */}
+	      <Card id="casino-accounts" className="glass">
         <CardHeader>
           <CardTitle>Casino Accounts</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {activeCasinos.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No casinos yet.</p>
-          ) : (
+	          {casinosLoading ? (
+	            <div className="grid gap-4">
+	              <SkeletonCard />
+	              <SkeletonCard />
+	            </div>
+	          ) : activeCasinos.length === 0 ? (
+	            <EmptyState
+                  withCard={false}
+                  icon={Building2}
+                  title="No casino partners yet"
+                  description="Check back soon — partner casinos will appear here once added."
+                />
+	          ) : (
             <div className="grid gap-4">
               {activeCasinos.map((casino) => {
                 const existing = casinoExisting[casino.id];
@@ -409,7 +443,7 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
                 const inputs = casinoInputs[casino.id] || { username: "", odId: "" };
 
                 return (
-                  <Card key={casino.id} className="border-muted">
+	                  <Card key={casino.id} className="border-white/10 bg-white/5">
                     <CardContent className="p-4 space-y-4">
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
@@ -426,8 +460,8 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                          {existing ? statusBadge(Boolean(existing.verified)) : <Badge variant="outline">Not linked</Badge>}
+	                        <div className="flex items-center gap-2">
+	                          {existing ? statusBadge(Boolean(existing.verified)) : <Badge variant="outline">Not linked</Badge>}
                           {existing && !isEditing && (
                             <Button
                               variant="outline"
@@ -505,9 +539,9 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
                         </Button>
                       </div>
 
-                      {existing && !existing.verified && (
+	                      {existing && !existing.verified && (
                         <p className="text-xs text-muted-foreground">
-                          Changes reset verification. An admin will review and verify your details.
+	                          Changes reset verification. An admin will review and verify your details.
                         </p>
                       )}
                     </CardContent>
@@ -519,15 +553,25 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
         </CardContent>
       </Card>
 
-      {/* Wallets */}
-      <Card>
+	      {/* Wallets */}
+	      <Card id="wallet-proofs" className="glass">
         <CardHeader>
           <CardTitle>SOL Wallet Proofs</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {activeCasinos.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No casinos yet.</p>
-          ) : (
+	          {casinosLoading ? (
+	            <div className="grid gap-4">
+	              <SkeletonCard />
+	              <SkeletonCard />
+	            </div>
+	          ) : activeCasinos.length === 0 ? (
+	            <EmptyState
+                  withCard={false}
+                  icon={Wallet}
+                  title="No casino partners yet"
+                  description="Wallet proof can be added once partner casinos are available."
+                />
+	          ) : (
             <div className="grid gap-4">
               {activeCasinos.map((casino) => {
                 const existing = walletExisting[casino.id];
@@ -535,7 +579,7 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
                 const inputs = walletInputs[casino.id] || { solAddress: "", file: null };
 
                 return (
-                  <Card key={casino.id} className="border-muted">
+	                  <Card key={casino.id} className="border-white/10 bg-white/5">
                     <CardContent className="p-4 space-y-4">
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
@@ -552,8 +596,8 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
                           </div>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                          {existing ? statusBadge(Boolean(existing.verified)) : <Badge variant="outline">Not submitted</Badge>}
+	                        <div className="flex items-center gap-2">
+	                          {existing ? statusBadge(Boolean(existing.verified)) : <Badge variant="outline">Not submitted</Badge>}
                           {existing && !isEditing && (
                             <Button
                               variant="outline"

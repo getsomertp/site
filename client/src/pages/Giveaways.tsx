@@ -4,7 +4,7 @@ import { useSession } from "@/hooks/useSession";
 import { useToast } from "@/hooks/use-toast";
 import { getQueryFn } from "@/lib/queryClient";
 import { motion } from "framer-motion";
-import { Gift, Clock, Users, CheckCircle, Lock, Sparkles, Loader2 } from "lucide-react";
+import { Gift, Clock, Users, CheckCircle, Lock, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -14,6 +14,8 @@ import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { useSeo } from "@/lib/seo";
 import { GiveawayRulesModal } from "@/components/GiveawayRulesModal";
+import { EmptyState } from "@/components/EmptyState";
+import { SkeletonGrid } from "@/components/SkeletonBlocks";
 import type { Casino, Giveaway, GiveawayRequirement } from "@shared/schema";
 
 type WinnerSummary = {
@@ -218,7 +220,7 @@ export default function Giveaways() {
     <div className="min-h-screen">
       <Navigation />
 
-      <div className="pt-28 pb-24">
+      <div className="pt-24 sm:pt-28 pb-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div
             className="text-center mb-12"
@@ -272,21 +274,23 @@ export default function Giveaways() {
           </div>
 
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-8 h-8 animate-spin text-neon-purple" />
+            <div className="mb-16">
+              <SkeletonGrid count={6} />
             </div>
           ) : filteredGiveaways.length === 0 ? (
-            <Card className="glass p-12 text-center mb-16">
-              <Gift className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-              <h3 className="font-display text-xl text-white mb-2">No Giveaways Found</h3>
-              <p className="text-muted-foreground">
-                {filter === "active"
-                  ? "No active giveaways right now. Check back soon!"
-                  : filter === "ended"
-                    ? "No ended giveaways yet."
-                    : "No giveaways available. Check back soon!"}
-              </p>
-            </Card>
+            <div className="mb-16">
+              <EmptyState
+                icon={Gift}
+                title="No giveaways found"
+                description={
+                  filter === "active"
+                    ? "No active giveaways right now. Check back soon."
+                    : filter === "ended"
+                      ? "No ended giveaways yet."
+                      : "No giveaways available right now."
+                }
+              />
+            </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-16">
               {filteredGiveaways.map((giveaway, i) => {

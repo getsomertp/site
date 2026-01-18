@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { Users, ExternalLink, Star, Percent, Gift, Shield, Zap, Loader2 } from "lucide-react";
+import { Users, ExternalLink, Star, Percent, Gift, Shield, Zap } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +9,8 @@ import { Footer } from "@/components/Footer";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeExternalUrl } from "@/lib/url";
 import { useSeo } from "@/lib/seo";
+import { EmptyState } from "@/components/EmptyState";
+import { SkeletonList } from "@/components/SkeletonBlocks";
 import type { Casino } from "@shared/schema";
 
 const benefits = [
@@ -81,7 +83,7 @@ export default function Affiliates() {
     <div className="min-h-screen">
       <Navigation />
       
-      <div className="pt-28 pb-24">
+      <div className="pt-24 sm:pt-28 pb-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div 
             className="text-center mb-16"
@@ -116,15 +118,13 @@ export default function Affiliates() {
           </motion.div>
 
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-8 h-8 animate-spin text-neon-purple" />
-            </div>
+            <SkeletonList count={5} />
           ) : casinos.length === 0 ? (
-            <Card className="glass p-12 text-center">
-              <Users className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-              <h3 className="font-display text-xl text-white mb-2">No Affiliates Yet</h3>
-              <p className="text-muted-foreground">Check back soon for exclusive casino partnerships!</p>
-            </Card>
+            <EmptyState
+              icon={Users}
+              title="No affiliates yet"
+              description="Check back soon for exclusive casino partnerships."
+            />
           ) : (
             <div className="space-y-6">
               {casinos.map((casino, i) => {

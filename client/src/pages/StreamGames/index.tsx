@@ -12,6 +12,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useSeo } from "@/lib/seo";
+import { EmptyState } from "@/components/EmptyState";
+import { SkeletonList } from "@/components/SkeletonBlocks";
 
 type StreamEvent = {
   id: number;
@@ -90,7 +92,7 @@ const isLoggedIn = Boolean(session?.user?.id);
   return (
     <div className="min-h-screen">
       <Navigation />
-      <div className="pt-28 pb-24">
+      <div className="pt-24 sm:pt-28 pb-24">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div
             className="text-center mb-10"
@@ -102,7 +104,7 @@ const isLoggedIn = Boolean(session?.user?.id);
           </motion.div>
 
           {!isLoggedIn && (
-            <Card className="mb-6 p-4 bg-white/5 border-white/10 flex items-center justify-between gap-4">
+            <Card className="glass mb-6 p-4 flex items-center justify-between gap-4">
               <div className="text-white/80">
                 <div className="font-semibold text-white">Connect Discord to enter games</div>
                 <div className="text-sm text-white/60">You need to be logged in to enter stream events.</div>
@@ -165,7 +167,7 @@ const isLoggedIn = Boolean(session?.user?.id);
               />
             </TabsContent>
             <TabsContent value="guess" className="mt-6">
-              <Card className="p-4 mb-4 bg-white/5 border-white/10 text-white/70">
+              <Card className="glass p-4 mb-4 text-white/70">
                 Guess Balance entries are <span className="text-white">coming soon</span>. This tab is view-only for now.
               </Card>
               <EventList
@@ -220,15 +222,18 @@ function EventList({
 }) {
   if (isLoading) {
     return (
-      <div className="grid gap-4">
-        <Card className="p-6 bg-white/5 border-white/10 text-white/70">Loading…</Card>
-        <Card className="p-6 bg-white/5 border-white/10 text-white/70">Loading…</Card>
-      </div>
+      <SkeletonList count={4} />
     );
   }
 
   if (!events.length) {
-    return <Card className="p-6 bg-white/5 border-white/10 text-white/70">{empty}</Card>;
+    return (
+      <EmptyState
+        icon={Zap}
+        title="No stream games yet"
+        description={empty}
+      />
+    );
   }
 
   const active = events.filter((e) => ["open", "locked", "in_progress"].includes(String(e.status || "").toLowerCase()));
@@ -282,7 +287,9 @@ function Section({
       {items.length ? (
         <div className="grid gap-4">{items.map(render)}</div>
       ) : (
-        <Card className="p-6 bg-white/5 border-white/10 text-white/70">{empty}</Card>
+        <div className="rounded-2xl">
+          <EmptyState withCard={false} icon={Zap} title={title} description={empty} />
+        </div>
       )}
     </div>
   );
@@ -315,7 +322,7 @@ function EventCard({
   const canEnter = Boolean(ev.canEnter);
 
   return (
-    <Card className="p-6 bg-white/5 border-white/10">
+    <Card className="glass p-6">
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex items-center gap-3">

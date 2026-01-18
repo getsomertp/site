@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Building2, ExternalLink, Search, Trophy, Gift, Loader2 } from "lucide-react";
+import { Building2, ExternalLink, Search, Trophy, Gift } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Card } from "@/components/ui/card";
@@ -10,6 +10,8 @@ import { Input } from "@/components/ui/input";
 import { getQueryFn } from "@/lib/queryClient";
 import { normalizeExternalUrl } from "@/lib/url";
 import { useSeo } from "@/lib/seo";
+import { EmptyState } from "@/components/EmptyState";
+import { SkeletonGrid } from "@/components/SkeletonBlocks";
 
 type Casino = {
   id: number;
@@ -46,7 +48,7 @@ export default function Partners() {
     <div className="min-h-screen">
       <Navigation />
 
-      <div className="pt-28 pb-16">
+      <div className="pt-24 sm:pt-28 pb-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div
             className="text-center mb-10"
@@ -78,15 +80,13 @@ export default function Partners() {
           </div>
 
           {isLoading ? (
-            <div className="flex items-center justify-center py-14">
-              <Loader2 className="w-8 h-8 animate-spin text-neon-purple" />
-            </div>
+            <SkeletonGrid count={9} />
           ) : filtered.length === 0 ? (
-            <Card className="glass p-12 text-center">
-              <Building2 className="w-14 h-14 text-muted-foreground mx-auto mb-4" />
-              <h3 className="font-display text-xl text-white mb-2">No partners found</h3>
-              <p className="text-muted-foreground">Try a different search, or check back soon.</p>
-            </Card>
+            <EmptyState
+              icon={Building2}
+              title="No partners found"
+              description="Try a different search, or check back soon."
+            />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filtered.map((c, i) => {
