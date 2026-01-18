@@ -12,6 +12,7 @@ import { getQueryFn } from "@/lib/queryClient";
 import { GiveawayRulesModal } from "@/components/GiveawayRulesModal";
 import { EmptyState } from "@/components/EmptyState";
 import { SkeletonList } from "@/components/SkeletonBlocks";
+import { ProvablyFairModal } from "@/components/ProvablyFairModal";
 
 type WinnerSummary = {
   id: string;
@@ -138,7 +139,7 @@ export default function Winners() {
                           </div>
                         </div>
 
-                        <div className="flex items-center justify-between md:justify-end gap-4">
+                        <div className="flex flex-wrap items-center justify-between md:justify-end gap-4">
                           <div className="text-right">
                             <div className="font-display font-bold text-neon-gold text-lg">{w.prize}</div>
                             <div className="text-xs text-white/55">Ended {ended.toLocaleDateString()}</div>
@@ -154,6 +155,8 @@ export default function Winners() {
                               <span className="text-sm text-white/70">{casinoName}</span>
                             </div>
                           ) : null}
+
+                          <ProvablyFairModal giveawayId={w.id} />
                         </div>
                       </div>
                     </Card>

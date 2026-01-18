@@ -14,6 +14,7 @@ import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { useSeo } from "@/lib/seo";
 import { GiveawayRulesModal } from "@/components/GiveawayRulesModal";
+import { ProvablyFairModal } from "@/components/ProvablyFairModal";
 import { EmptyState } from "@/components/EmptyState";
 import { SkeletonGrid } from "@/components/SkeletonBlocks";
 import type { Casino, Giveaway, GiveawayRequirement } from "@shared/schema";
@@ -497,6 +498,10 @@ export default function Giveaways() {
                           </div>
                         </DialogContent>
                       </Dialog>
+
+                      <div className="mt-3 flex items-center justify-center">
+                        <ProvablyFairModal giveawayId={giveaway.id} />
+                      </div>
                     </Card>
                   </motion.div>
                 );
