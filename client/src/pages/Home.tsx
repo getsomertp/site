@@ -1,16 +1,19 @@
 import { motion } from "framer-motion";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
-import { Trophy, Gift, Users, Zap, ExternalLink } from "lucide-react";
+import { Trophy, Gift, Users, Zap, ExternalLink, Building2, Crown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { GiveawayRulesModal } from "@/components/GiveawayRulesModal";
-import heroBg from "@assets/generated_images/dark_neon_casino_background.png";
+import { EmptyState } from "@/components/EmptyState";
+import { SkeletonGrid } from "@/components/SkeletonBlocks";
 import { normalizeExternalUrl } from "@/lib/url";
 import { useSession } from "@/hooks/useSession";
 import { useToast } from "@/hooks/use-toast";
+import { useSeo } from "@/lib/seo";
 import type { Giveaway, GiveawayRequirement } from "@shared/schema";
 
 type Casino = {
@@ -29,15 +32,6 @@ type GiveawayWithDetails = Giveaway & {
   entries: number;
   requirements: GiveawayRequirement[];
   hasEntered?: boolean;
-};
-
-type RecentWinner = {
-  id: number;
-  title: string;
-  prize: string;
-  endsAt: string | Date;
-  casino: { id: number; name: string; slug: string; logo?: string | null } | null;
-  winner: { id: string; discordUsername?: string | null; discordAvatarUrl?: string | null; kickUsername?: string | null } | null;
 };
 
 type HomeLeaderboard = null | {
@@ -97,18 +91,13 @@ export default function Home() {
     window.location.href = "/api/auth/discord";
   };
 
-  const { data: casinos = [] } = useQuery<Casino[]>({
+  const { data: casinos = [], isLoading: casinosLoading } = useQuery<Casino[]>({
     queryKey: ["/api/casinos"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
-  const { data: giveaways = [] } = useQuery<GiveawayWithDetails[]>({
+  const { data: giveaways = [], isLoading: giveawaysLoading } = useQuery<GiveawayWithDetails[]>({
     queryKey: ["/api/giveaways/active"],
-    queryFn: getQueryFn({ on401: "returnNull" }),
-  });
-
-  const { data: recentWinners = [] } = useQuery<RecentWinner[]>({
-    queryKey: ["/api/giveaways/winners"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
@@ -171,7 +160,7 @@ export default function Home() {
     },
   });
 
-  const { data: siteSettingsRaw } = useQuery<Record<string, string> | null>({
+  const { data: siteSettingsRaw, isLoading: settingsLoading } = useQuery<Record<string, string> | null>({
     queryKey: ["/api/site/settings"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
@@ -179,23 +168,27 @@ export default function Home() {
   // Guard against null (e.g., if a proxy/auth layer returns 401).
   const siteSettings = (siteSettingsRaw as any) || {};
 
-  const { data: homeLb } = useQuery<HomeLeaderboard>({
+  const { data: homeLb, isLoading: homeLbLoading } = useQuery<HomeLeaderboard>({
     queryKey: ["/api/home/leaderboard"],
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
   const activeCasinos = (casinos || []).filter((c) => c.isActive !== false);
-  const showNoCasinos = activeCasinos.length === 0;
+  const showNoCasinos = !casinosLoading && activeCasinos.length === 0;
 
   const activeGiveaways = (giveaways || []).slice(0, 3);
-  const showNoGiveaways = activeGiveaways.length === 0;
-
-  const winnersToShow = (recentWinners || []).slice(0, 3);
-  const showNoWinners = winnersToShow.length === 0;
+  const showNoGiveaways = !giveawaysLoading && activeGiveaways.length === 0;
 
 
+  const brandName = siteSettings.brandName || "GETSOME";
   const kickUrl = siteSettings.kickUrl || "https://kick.com/get-some";
   const discordUrl = siteSettings.discordUrl || "https://discord.gg/";
+
+  useSeo({
+    title: String(brandName || "GETSOME"),
+    description: "Live giveaways, leaderboards, and stream games — all in one place.",
+    path: "/",
+  });
 
   const communityMembers = Number(siteSettings.communityMembers || 0);
   const totalGivenAway = Number(siteSettings.totalGivenAway || 0);
@@ -208,76 +201,99 @@ export default function Home() {
   const casinoLink = casinoSlug ? `/leaderboard?casino=${encodeURIComponent(casinoSlug)}` : undefined;
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen text-foreground">
       <Navigation />
 
       {/* Hero */}
       <section className="relative overflow-hidden">
-        <div className="absolute inset-0">
-          <img src={heroBg} className="w-full h-full object-cover opacity-40" />
-          <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/80 to-background" />
-        </div>
+        <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/25 to-black/55" />
 
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-20 pb-14">
-          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="max-w-3xl">
-            <h1 className="font-display text-4xl md:text-6xl font-bold text-white leading-tight">
-              GETSOME Stream Hub
-            </h1>
-            <p className="mt-4 text-lg text-muted-foreground">
-              Live giveaways, leaderboards, and stream games — all in one place.
-            </p>
-            <div className="mt-8 flex flex-wrap gap-3">
-              <Button asChild>
-                <a href={kickUrl} target="_blank" rel="noreferrer">
-                  Watch Live <ExternalLink className="ml-2 w-4 h-4" />
-                </a>
-              </Button>
-              <Button variant="outline" asChild>
-                <a href={discordUrl} target="_blank" rel="noreferrer">
-                  Join Discord <ExternalLink className="ml-2 w-4 h-4" />
-                </a>
-              </Button>
-              <Button variant="secondary" asChild>
-                <a href="/stream-games">Stream Games</a>
-              </Button>
-            </div>
-          </motion.div>
+          <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="lg:col-span-12"
+            >
+              <h1 className="font-display text-4xl md:text-6xl font-bold text-white leading-tight">
+                {brandName}
+              </h1>
+              <p className="mt-4 text-lg text-muted-foreground">
+                Live giveaways, leaderboards, and stream games — all in one place.
+              </p>
+              <div className="mt-8 flex flex-wrap gap-3">
+                <Button asChild className="font-display bg-gradient-to-r from-neon-purple to-neon-pink text-white">
+                  <a href={kickUrl} target="_blank" rel="noreferrer">
+                    Watch Live <ExternalLink className="ml-2 w-4 h-4" />
+                  </a>
+                </Button>
+                <Button
+                  variant="outline"
+                  asChild
+                  className="font-display border-white/20 hover:bg-white/5"
+                >
+                  <a href={discordUrl} target="_blank" rel="noreferrer">
+                    Join Discord <ExternalLink className="ml-2 w-4 h-4" />
+                  </a>
+                </Button>
+                <Button variant="secondary" asChild>
+                  <a href="/stream-games">Stream Games</a>
+                </Button>
+              </div>
+            </motion.div>
+          </div>
 
           {/* Stats */}
           <div className="mt-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card className="p-5">
+            <Card className="glass p-5">
               <div className="flex items-center gap-3">
                 <Users className="w-5 h-5" />
                 <div>
                   <div className="text-sm text-muted-foreground">Community</div>
-                  <div className="text-2xl font-bold">{communityMembers.toLocaleString()}</div>
+                  {settingsLoading ? (
+                    <Skeleton className="h-7 w-20" />
+                  ) : (
+                    <div className="text-2xl font-bold">{communityMembers.toLocaleString()}</div>
+                  )}
                 </div>
               </div>
             </Card>
-            <Card className="p-5">
+            <Card className="glass p-5">
               <div className="flex items-center gap-3">
                 <Gift className="w-5 h-5" />
                 <div>
                   <div className="text-sm text-muted-foreground">Given Away</div>
-                  <div className="text-2xl font-bold">{formatMoney(totalGivenAway)}</div>
+                  {settingsLoading ? (
+                    <Skeleton className="h-7 w-24" />
+                  ) : (
+                    <div className="text-2xl font-bold">{formatMoney(totalGivenAway)}</div>
+                  )}
                 </div>
               </div>
             </Card>
-            <Card className="p-5">
+            <Card className="glass p-5">
               <div className="flex items-center gap-3">
                 <Trophy className="w-5 h-5" />
                 <div>
                   <div className="text-sm text-muted-foreground">Winners</div>
-                  <div className="text-2xl font-bold">{totalWinners.toLocaleString()}</div>
+                  {settingsLoading ? (
+                    <Skeleton className="h-7 w-16" />
+                  ) : (
+                    <div className="text-2xl font-bold">{totalWinners.toLocaleString()}</div>
+                  )}
                 </div>
               </div>
             </Card>
-            <Card className="p-5">
+            <Card className="glass p-5">
               <div className="flex items-center gap-3">
                 <Zap className="w-5 h-5" />
                 <div>
                   <div className="text-sm text-muted-foreground">Live Hours</div>
-                  <div className="text-2xl font-bold">{liveHours.toLocaleString()}</div>
+                  {settingsLoading ? (
+                    <Skeleton className="h-7 w-14" />
+                  ) : (
+                    <div className="text-2xl font-bold">{liveHours.toLocaleString()}</div>
+                  )}
                 </div>
               </div>
             </Card>
@@ -292,19 +308,24 @@ export default function Home() {
             <h2 className="text-2xl font-bold text-white">Casino Partners</h2>
             <p className="text-muted-foreground">Use the official links to support the stream.</p>
           </div>
+          <Button variant="outline" asChild>
+            <a href="/partners">View All</a>
+          </Button>
         </div>
 
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {showNoCasinos ? (
-            <Card className="p-6">
-              <div className="text-white font-semibold">No casinos yet</div>
-              <div className="text-muted-foreground text-sm mt-1">
-                Add your first casino in the Admin panel and it will appear here.
-              </div>
-            </Card>
+        <div className="mt-6">
+          {casinosLoading ? (
+            <SkeletonGrid count={6} />
+          ) : showNoCasinos ? (
+            <EmptyState
+              icon={Building2}
+              title="No casino partners yet"
+              description="Once a casino is added in Admin, it will show up here automatically."
+            />
           ) : (
-            activeCasinos.slice(0, 6).map((c) => (
-              <Card key={c.id} className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {activeCasinos.slice(0, 6).map((c) => (
+              <Card key={c.id} className="glass p-6">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     {c.logo ? (
@@ -339,7 +360,8 @@ export default function Home() {
                   )}
                 </div>
               </Card>
-            ))
+              ))}
+            </div>
           )}
         </div>
       </section>
@@ -360,17 +382,19 @@ export default function Home() {
           </div>
         </div>
 
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-          {showNoGiveaways ? (
-            <Card className="p-6 md:col-span-3">
-              <div className="text-white font-semibold">No active giveaways</div>
-              <div className="text-muted-foreground text-sm mt-1">
-                When a giveaway is created and activated, it will show up here automatically.
-              </div>
-            </Card>
+        <div className="mt-6">
+          {giveawaysLoading ? (
+            <SkeletonGrid count={3} />
+          ) : showNoGiveaways ? (
+            <EmptyState
+              icon={Gift}
+              title="No active giveaways"
+              description="When a giveaway is created and activated, it will appear here automatically."
+            />
           ) : (
-            activeGiveaways.map((g) => (
-              <Card key={g.id} className="p-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {activeGiveaways.map((g) => (
+              <Card key={g.id} className="glass p-6">
                 <div className="text-white font-semibold">{g.title}</div>
                 <div className="mt-2 text-2xl font-bold text-neon-gold">
                   {g.prize}
@@ -427,60 +451,12 @@ export default function Home() {
                   )}
                 </div>
               </Card>
-            ))
+              ))}
+            </div>
           )}
         </div>
       </section>
 
-
-
-      {/* Recent Winners */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12">
-        <div className="flex items-end justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-bold text-white">Recent Winners</h2>
-            <p className="text-muted-foreground">Latest giveaway winners announced on stream.</p>
-          </div>
-          <Button variant="outline" asChild>
-            <a href="/giveaways">View Giveaways</a>
-          </Button>
-        </div>
-
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-          {showNoWinners ? (
-            <Card className="p-6 md:col-span-3">
-              <div className="text-white font-semibold">No winners yet</div>
-              <div className="text-muted-foreground text-sm mt-1">
-                Once a giveaway ends and a winner is picked, it will appear here.
-              </div>
-            </Card>
-          ) : (
-            winnersToShow.map((w) => (
-              <Card key={w.id} className="p-6">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white">
-                    {w.winner?.discordAvatarUrl ? (
-                      <img src={w.winner.discordAvatarUrl} alt="" className="w-full h-full object-cover" />
-                    ) : (
-                      (w.winner?.discordUsername || w.winner?.kickUsername || "?").slice(0, 1).toUpperCase()
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-white font-semibold truncate">{w.winner?.discordUsername || w.winner?.kickUsername || "Winner"}</div>
-                    <div className="text-xs text-muted-foreground truncate">{w.casino?.name ? `${w.casino.name}` : "Giveaway"}</div>
-                  </div>
-                </div>
-
-                <div className="mt-4 text-white font-semibold line-clamp-2">{w.title}</div>
-                <div className="mt-2 text-2xl font-bold text-neon-gold">{w.prize}</div>
-                <div className="mt-2 text-xs text-muted-foreground">
-                  Ended: {w.endsAt ? new Date(w.endsAt as any).toLocaleDateString() : "—"}
-                </div>
-              </Card>
-            ))
-          )}
-        </div>
-      </section>
       {/* Leaderboard */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-16">
         <div className="flex items-end justify-between gap-4">
@@ -499,15 +475,19 @@ export default function Home() {
         </div>
 
         <div className="mt-6">
-          {!hasLeaderboard ? (
-            <Card className="p-6">
-              <div className="text-white font-semibold">(no leaderboard yet)</div>
-              <div className="text-muted-foreground text-sm mt-1">
-                Add at least one casino leaderboard API in Admin to populate this section.
-              </div>
+          {homeLbLoading ? (
+            <Card className="glass p-6">
+              <Skeleton className="h-4 w-2/3" />
+              <Skeleton className="h-4 w-1/2 mt-3" />
             </Card>
+          ) : !hasLeaderboard ? (
+            <EmptyState
+              icon={Trophy}
+              title="(no leaderboard yet)"
+              description="Add at least one casino leaderboard API in Admin to populate this section."
+            />
           ) : (
-            <Card className="p-6">
+            <Card className="glass p-6">
               <div className="text-muted-foreground text-sm">
                 Leaderboard is available for <span className="text-white font-semibold">{lbCasino?.name}</span>. Click “View Full Leaderboard”.
               </div>

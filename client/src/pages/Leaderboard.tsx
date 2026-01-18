@@ -6,9 +6,12 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
+import { useSeo } from "@/lib/seo";
 import { normalizeExternalUrl } from "@/lib/url";
+import { EmptyState } from "@/components/EmptyState";
 import type { Casino } from "@shared/schema";
 
 type LeaderboardEntry = {
@@ -70,6 +73,11 @@ function formatTimeRemaining(iso?: string) {
 }
 
 export default function Leaderboard() {
+  useSeo({
+    title: "Leaderboard",
+    description: "View partner leaderboards and track the top players.",
+    path: "/leaderboard",
+  });
   const [period, setPeriod] = useState("monthly");
   const [selectedCasinoSlug, setSelectedCasinoSlug] = useState<string>("");
 
@@ -153,7 +161,7 @@ export default function Leaderboard() {
     <div className="min-h-screen">
       <Navigation />
       
-      <div className="pt-28 pb-24">
+      <div className="pt-24 sm:pt-28 pb-24">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div 
             className="text-center mb-12"
@@ -172,13 +180,30 @@ export default function Leaderboard() {
           </motion.div>
 
           {loadingCasinos ? (
-            <div className="text-center py-12 text-muted-foreground">Loading casinos...</div>
-          ) : casinos.length === 0 ? (
-            <Card className="glass p-12 text-center">
-              <Trophy className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-              <h3 className="font-display text-xl text-white mb-2">No Casinos Yet</h3>
-              <p className="text-muted-foreground">Check back soon for leaderboards!</p>
+            <Card className="glass p-6">
+              <div className="flex flex-col lg:flex-row items-center justify-between gap-6">
+                <div className="w-full lg:w-auto">
+                  <Skeleton className="h-3 w-28 mb-2" />
+                  <Skeleton className="h-11 w-[240px]" />
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="text-center px-6 border-r border-white/10">
+                    <Skeleton className="h-7 w-20 mx-auto" />
+                    <Skeleton className="h-3 w-16 mx-auto mt-2" />
+                  </div>
+                  <div className="text-center px-6">
+                    <Skeleton className="h-7 w-24 mx-auto" />
+                    <Skeleton className="h-3 w-16 mx-auto mt-2" />
+                  </div>
+                </div>
+              </div>
             </Card>
+          ) : casinos.length === 0 ? (
+            <EmptyState
+              icon={Trophy}
+              title="No casinos yet"
+              description="Leaderboards will appear here once casino partners are added."
+            />
           ) : (
             <>
               <motion.div
@@ -300,37 +325,47 @@ export default function Leaderboard() {
                   <TabsContent key={tab} value={tab}>
                     <Card className="glass overflow-hidden" data-testid={`card-leaderboard-${tab}`}>
                       {loadingLeaderboard ? (
-                        <div className="p-12 text-center text-muted-foreground">
-                          Loading leaderboard...
+                        <div className="p-6 sm:p-8 space-y-4">
+                          {Array.from({ length: 10 }).map((_, i) => (
+                            <div key={i} className="flex items-center gap-4">
+                              <Skeleton className="h-10 w-10 rounded-full" />
+                              <div className="flex-1">
+                                <Skeleton className="h-4 w-40" />
+                                <Skeleton className="h-3 w-24 mt-2" />
+                              </div>
+                              <Skeleton className="h-5 w-20" />
+                            </div>
+                          ))}
                         </div>
                       ) : !selectedCasino?.leaderboardApiUrl ? (
-                        <div className="p-12 text-center">
-                          <Trophy className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-                          <h3 className="font-display text-xl text-white mb-2">Leaderboard Coming Soon</h3>
-                          <p className="text-muted-foreground">
-                            The leaderboard for {selectedCasino?.name || "this casino"} is being set up.
-                          </p>
+                        <div className="p-12">
+                          <EmptyState
+                            withCard={false}
+                            icon={Trophy}
+                            title="Leaderboard coming soon"
+                            description={`The leaderboard for ${selectedCasino?.name || "this casino"} is being set up.`}
+                          />
                         </div>
                       ) : leaderboardData?.data?.length === 0 ? (
-                        <div className="p-12 text-center">
-                          <Trophy className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-                          <h3 className="font-display text-xl text-white mb-2">No Data Yet</h3>
-                          <p className="text-muted-foreground">
-                            Be the first to climb the {selectedCasino?.name} leaderboard!
-                          </p>
-                          {selectedCasino?.affiliateLink && (
-                            <Button 
-                              className="mt-4 font-display"
-                              style={{ backgroundColor: selectedCasino.color }}
-                              onClick={() => {
-                                const url = normalizeExternalUrl((selectedCasino as any)?.affiliateLink);
-                                if (!url) return;
-                                window.open(url, "_blank", "noopener,noreferrer");
-                              }}
-                            >
-                              Sign Up at {selectedCasino.name}
-                            </Button>
-                          )}
+                        <div className="p-12">
+                          <EmptyState
+                            withCard={false}
+                            icon={Trophy}
+                            title="No data yet"
+                            description={`Be the first to climb the ${selectedCasino?.name} leaderboard!`}
+                            primaryAction={
+                              selectedCasino?.affiliateLink
+                                ? {
+                                    label: `Sign up at ${selectedCasino.name}`,
+                                    onClick: () => {
+                                      const url = normalizeExternalUrl((selectedCasino as any)?.affiliateLink);
+                                      if (!url) return;
+                                      window.open(url, "_blank", "noopener,noreferrer");
+                                    },
+                                  }
+                                : undefined
+                            }
+                          />
                         </div>
                       ) : (
                         <>

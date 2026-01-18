@@ -3,10 +3,13 @@ import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { SiteBackground } from "@/components/SiteBackground";
+import { SiteThemeApplier } from "@/components/SiteThemeApplier";
 import Home from "@/pages/Home";
 import Leaderboard from "@/pages/Leaderboard";
 import Giveaways from "@/pages/Giveaways";
 import Winners from "@/pages/Winners";
+import Partners from "@/pages/Partners";
 import Affiliates from "@/pages/Affiliates";
 import Profile from "@/pages/Profile";
 import StreamGames from "@/pages/StreamGames";
@@ -22,6 +25,7 @@ function Router() {
       <Route path="/leaderboard" component={Leaderboard} />
       <Route path="/giveaways" component={Giveaways} />
       <Route path="/winners" component={Winners} />
+      <Route path="/partners" component={Partners} />
       <Route path="/affiliates" component={Affiliates} />
       <Route path="/profile" component={Profile} />
       <Route path="/stream-games" component={StreamGames} />
@@ -35,8 +39,15 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <Toaster />
-        <Router />
+        {/* Theme + background are global so every page stays consistent */}
+        <SiteThemeApplier />
+        <div className="relative min-h-screen">
+          <SiteBackground />
+          <div className="relative z-10">
+            <Toaster />
+            <Router />
+          </div>
+        </div>
       </TooltipProvider>
     </QueryClientProvider>
   );

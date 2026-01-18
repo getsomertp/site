@@ -5,12 +5,14 @@ import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { useSeo } from "@/lib/seo";
 
 export default function NotFound() {
+  useSeo({ title: "Not Found", description: "Page not found.", path: window.location.pathname });
   return (
     <div className="min-h-screen">
       <Navigation />
-      <div className="pt-28 pb-24">
+      <div className="pt-24 sm:pt-28 pb-24">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
             <Card className="glass max-w-xl mx-auto">

@@ -1,32 +1,8 @@
-
-async function uploadCasinoLogo(file: File): Promise<string> {
-  const fd = new FormData();
-  fd.append("logo", file);
-  const res = await fetch("/api/admin/uploads/casino-logo", {
-    method: "POST",
-    body: fd,
-    credentials: "include",
-  });
-  if (!res.ok) {
-    const txt = await res.text();
-    // Try JSON first, fall back to raw text
-    try {
-      const j = JSON.parse(txt);
-      throw new Error(j?.error || j?.message || "Upload failed");
-    } catch {
-      throw new Error(txt || "Upload failed");
-    }
-  }
-  const data = await res.json();
-  if (!data?.url) throw new Error("Upload failed: missing url");
-  return data.url as string;
-}
-
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Settings, Plus, Trash2, Edit, Save, X, ExternalLink, Trophy, Gift, Lock, Users, Search, DollarSign, Wallet, Image, Tv, LogIn, LogOut, Download, ScrollText, BadgeCheck } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { Settings, Plus, Trash2, Edit, Save, X, ExternalLink, Trophy, Gift, Lock, Users, Search, DollarSign, Wallet, Image, Tv, LogIn, LogOut, Download, ScrollText, BadgeCheck, Loader2 } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -37,9 +13,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Badge } from "@/components/ui/badge";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
+import { useSeo } from "@/lib/seo";
 import { StreamEvents } from "@/components/StreamEvents";
 import { useToast } from "@/hooks/use-toast";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Slider } from "@/components/ui/slider";
 import { downloadCsv } from "@/lib/csv";
 import type { Casino, Giveaway, GiveawayRequirement, User, UserPayment, UserCasinoAccount, UserWallet } from "@shared/schema";
 
@@ -97,6 +75,73 @@ async function adminFetch(url: string, options: RequestInit = {}) {
     throw new Error(`Non-JSON response from ${url} (${res.status}). This usually means the API route was not found and the app returned HTML instead. Preview: ${preview}`);
   }
   return res.json();
+}
+
+async function uploadCasinoLogo(file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("logo", file);
+  const res = await fetch("/api/admin/uploads/casino-logo", {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    // Try JSON first, fall back to raw text
+    try {
+      const j = JSON.parse(txt);
+      throw new Error(j?.error || j?.message || "Upload failed");
+    } catch {
+      throw new Error(txt || "Upload failed");
+    }
+  }
+  const data = await res.json();
+  if (!data?.url) throw new Error("Upload failed: missing url");
+  return data.url as string;
+}
+
+async function uploadSiteLogo(file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("logo", file);
+  const res = await fetch("/api/admin/uploads/site-logo", {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    try {
+      const j = JSON.parse(txt);
+      throw new Error(j?.error || j?.message || "Upload failed");
+    } catch {
+      throw new Error(txt || "Upload failed");
+    }
+  }
+  const data = await res.json();
+  if (!data?.url) throw new Error("Upload failed: missing url");
+  return data.url as string;
+}
+
+async function uploadSiteBackground(file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("background", file);
+  const res = await fetch("/api/admin/uploads/site-background", {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    try {
+      const j = JSON.parse(txt);
+      throw new Error(j?.error || j?.message || "Upload failed");
+    } catch {
+      throw new Error(txt || "Upload failed");
+    }
+  }
+  const data = await res.json();
+  if (!data?.url) throw new Error("Upload failed: missing url");
+  return data.url as string;
 }
 
 type CasinoFormData = {
@@ -273,9 +318,17 @@ function AdminLogin({ onLogin }: { onLogin: () => void }) {
 }
 
 export default function Admin() {
+  useSeo({
+    title: "Admin",
+    description: "Manage casinos, giveaways, users, and site settings.",
+    path: "/admin",
+  });
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [adminInfo, setAdminInfo] = useState<any | null>(null);
+  const isStaff = adminInfo?.isStaff === true;
+  const isAdminLike = adminInfo?.isAdmin === true;
+  const perms = adminInfo?.permissions || {};
   const [casinoDialogOpen, setCasinoDialogOpen] = useState(false);
   const [giveawayDialogOpen, setGiveawayDialogOpen] = useState(false);
   const [editingCasino, setEditingCasino] = useState<Casino | null>(null);
@@ -298,6 +351,15 @@ const [auditSearch, setAuditSearch] = useState("");
   // Site settings
   const [siteKickUrl, setSiteKickUrl] = useState("https://kick.com/get-some");
   const [siteDiscordUrl, setSiteDiscordUrl] = useState("https://discord.gg/");
+  const [siteBrandName, setSiteBrandName] = useState("GETSOME");
+  const [siteBrandLogoUrl, setSiteBrandLogoUrl] = useState("");
+  const [uploadingSiteLogo, setUploadingSiteLogo] = useState(false);
+
+  // Theme
+  const [themeBgUrl, setThemeBgUrl] = useState("");
+  const [themeOverlay, setThemeOverlay] = useState(0.78);
+  const [themeAccent, setThemeAccent] = useState("#b026ff");
+  const [uploadingThemeBg, setUploadingThemeBg] = useState(false);
 
   // Leaderboards
   const [leaderboardDialogOpen, setLeaderboardDialogOpen] = useState(false);
@@ -322,55 +384,69 @@ const [auditSearch, setAuditSearch] = useState("");
   useEffect(() => {
     fetch("/api/admin/me", { credentials: "include" })
       .then(res => res.json())
-      .then(data => setIsAuthenticated(data.isAdmin))
-      .catch(() => setIsAuthenticated(false));
+      .then(data => setAdminInfo(data))
+      .catch(() => setAdminInfo({ isStaff: false, isAdmin: false, role: null, permissions: {} }));
   }, []);
 
   // Fetch all casinos including inactive (admin endpoint)
   const { data: casinos = [], isLoading: loadingCasinos } = useQuery<Casino[]>({
     queryKey: ["/api/admin/casinos"],
     queryFn: () => adminFetch("/api/admin/casinos"),
-    enabled: isAuthenticated === true,
+    enabled: isAdminLike === true,
   });
 
   // Site settings
   const { data: siteSettings = {} } = useQuery<Record<string, string>>({
     queryKey: ["/api/admin/site/settings"],
-    queryFn: () => adminFetch("/api/admin/site-settings"),
-    enabled: isAuthenticated === true,
+    queryFn: () => adminFetch("/api/admin/site/settings"),
+    enabled: isAdminLike === true,
   });
 
 // Admin audit log
 const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAuditLog[]>({
   queryKey: ["/api/admin/audit", auditSearch],
   queryFn: () => adminFetch(`/api/admin/audit?q=${encodeURIComponent(auditSearch)}`),
-  enabled: isAuthenticated === true,
+  enabled: isAdminLike === true,
 });
 
 
   useEffect(() => {
     if (siteSettings?.kickUrl) setSiteKickUrl(siteSettings.kickUrl);
     if (siteSettings?.discordUrl) setSiteDiscordUrl(siteSettings.discordUrl);
+    if (siteSettings?.brandName) setSiteBrandName(siteSettings.brandName);
+    if (siteSettings?.brandLogoUrl) setSiteBrandLogoUrl(siteSettings.brandLogoUrl);
+
+    if (siteSettings?.themeBackgroundUrl !== undefined) {
+      setThemeBgUrl(siteSettings.themeBackgroundUrl || "");
+    }
+    if (siteSettings?.themeOverlay !== undefined) {
+      const n = Number(String(siteSettings.themeOverlay || "").trim());
+      if (Number.isFinite(n)) {
+        const v = n > 1.2 ? n / 100 : n; // allow 78 (percent) or 0.78
+        setThemeOverlay(Math.max(0.4, Math.min(0.9, v)));
+      }
+    }
+    if (siteSettings?.themeAccent) setThemeAccent(siteSettings.themeAccent);
   }, [siteSettings]);
 
   // Leaderboards
   const { data: leaderboards = [], isLoading: loadingLeaderboards } = useQuery<any[]>({
     queryKey: ["/api/admin/leaderboards"],
     queryFn: () => adminFetch("/api/admin/leaderboards"),
-    enabled: isAuthenticated === true,
+    enabled: isAdminLike === true,
   });
 
   // Fetch giveaways  
   const { data: giveaways = [], isLoading: loadingGiveaways } = useQuery<GiveawayAdmin[]>({
     queryKey: ["/api/admin/giveaways"],
     queryFn: () => adminFetch("/api/admin/giveaways"),
-    enabled: isAuthenticated === true,
+    enabled: isStaff === true,
   });
 
   const { data: giveawayEntries = [], isLoading: loadingGiveawayEntries } = useQuery<GiveawayEntryAdmin[]>({
     queryKey: [selectedGiveawayForEntries ? `/api/admin/giveaways/${selectedGiveawayForEntries.id}/entries` : "/api/admin/giveaways/0/entries"],
     queryFn: () => adminFetch(`/api/admin/giveaways/${selectedGiveawayForEntries!.id}/entries`),
-    enabled: isAuthenticated === true && entriesDialogOpen && !!selectedGiveawayForEntries?.id,
+    enabled: isStaff === true && entriesDialogOpen && !!selectedGiveawayForEntries?.id,
   });
 
 
@@ -455,11 +531,32 @@ const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAudi
     mutationFn: async () => {
       await adminFetch("/api/admin/site/settings", {
         method: "POST",
+        body: JSON.stringify({ key: "brandName", value: (siteBrandName || "GETSOME").trim() || "GETSOME" }),
+      });
+      await adminFetch("/api/admin/site/settings", {
+        method: "POST",
+        body: JSON.stringify({ key: "brandLogoUrl", value: siteBrandLogoUrl || "" }),
+      });
+      await adminFetch("/api/admin/site/settings", {
+        method: "POST",
         body: JSON.stringify({ key: "kickUrl", value: siteKickUrl }),
       });
       await adminFetch("/api/admin/site/settings", {
         method: "POST",
         body: JSON.stringify({ key: "discordUrl", value: siteDiscordUrl }),
+      });
+
+      await adminFetch("/api/admin/site/settings", {
+        method: "POST",
+        body: JSON.stringify({ key: "themeBackgroundUrl", value: themeBgUrl || "" }),
+      });
+      await adminFetch("/api/admin/site/settings", {
+        method: "POST",
+        body: JSON.stringify({ key: "themeOverlay", value: String(Math.round(themeOverlay * 100) / 100) }),
+      });
+      await adminFetch("/api/admin/site/settings", {
+        method: "POST",
+        body: JSON.stringify({ key: "themeAccent", value: themeAccent || "" }),
       });
       return true;
     },
@@ -651,10 +748,10 @@ const deleteLeaderboard = useMutation({
   
   const handleLogout = async () => {
     await fetch("/api/admin/logout", { method: "POST", credentials: "include" });
-    setIsAuthenticated(false);
+    setAdminInfo({ isStaff: false, isAdmin: false, role: null, permissions: {} });
   };
   
-  if (isAuthenticated === null) {
+  if (adminInfo === null) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-white">Loading...</div>
@@ -662,8 +759,15 @@ const deleteLeaderboard = useMutation({
     );
   }
   
-  if (!isAuthenticated) {
-    return <AdminLogin onLogin={() => setIsAuthenticated(true)} />;
+  if (!isStaff) {
+    return <AdminLogin onLogin={async () => {
+      try {
+        const data = await fetch("/api/admin/me", { credentials: "include" }).then(r => r.json());
+        setAdminInfo(data);
+      } catch {
+        setAdminInfo({ isStaff: false, isAdmin: false, role: null, permissions: {} });
+      }
+    }} />;
   }
 
   const openEditCasino = (casino: Casino) => {
@@ -751,7 +855,7 @@ const deleteLeaderboard = useMutation({
     <div className="min-h-screen">
       <Navigation />
       
-      <div className="pt-28 pb-24">
+      <div className="pt-24 sm:pt-28 pb-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div 
             className="text-center mb-12"
@@ -779,11 +883,13 @@ const deleteLeaderboard = useMutation({
             </p>
           </motion.div>
 
-          <Tabs defaultValue="casinos" className="w-full">
+          <Tabs defaultValue={isAdminLike ? "casinos" : "giveaways"} className="w-full">
             <TabsList className="grid w-full grid-cols-4 md:grid-cols-8 mb-8 bg-card/50">
+              {isAdminLike && (
               <TabsTrigger value="casinos" className="font-display" data-testid="admin-tab-casinos">
                 <Trophy className="w-4 h-4 mr-2" /> Casinos
               </TabsTrigger>
+              )}
               <TabsTrigger value="giveaways" className="font-display" data-testid="admin-tab-giveaways">
                 <Gift className="w-4 h-4 mr-2" /> Giveaways
               </TabsTrigger>
@@ -793,19 +899,26 @@ const deleteLeaderboard = useMutation({
               <TabsTrigger value="verifications" className="font-display" data-testid="admin-tab-verifications">
                 <BadgeCheck className="w-4 h-4 mr-2" /> Verifications
               </TabsTrigger>
+              {isAdminLike && (
               <TabsTrigger value="stream-events" className="font-display" data-testid="admin-tab-stream-events">
                 <Tv className="w-4 h-4 mr-2" /> Stream Events
               </TabsTrigger>
+              )}
+              {isAdminLike && (
               <TabsTrigger value="leaderboards" className="font-display" data-testid="admin-tab-leaderboards">
                 <Trophy className="w-4 h-4 mr-2" /> Leaderboards
               </TabsTrigger>
+              )}
+              {isAdminLike && (
               <TabsTrigger value="site" className="font-display" data-testid="admin-tab-site">
                 <Settings className="w-4 h-4 mr-2" /> Site
               </TabsTrigger>
-            
-<TabsTrigger value="audit" className="font-display" data-testid="admin-tab-audit">
-  <ScrollText className="w-4 h-4 mr-2" /> Audit
-</TabsTrigger>
+              )}
+              {isAdminLike && (
+                <TabsTrigger value="audit" className="font-display" data-testid="admin-tab-audit">
+                  <ScrollText className="w-4 h-4 mr-2" /> Audit
+                </TabsTrigger>
+              )}
 </TabsList>
 
             <TabsContent value="casinos">
@@ -1163,7 +1276,33 @@ const deleteLeaderboard = useMutation({
             <TabsContent value="giveaways">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="font-display text-2xl font-bold text-white">Manage Giveaways</h2>
-                <Dialog open={giveawayDialogOpen} onOpenChange={(open) => {
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    className="font-display"
+                    onClick={() => {
+                      const rows = giveaways
+                        .filter((g) => !!g.winnerId)
+                        .map((g) => ({
+                          giveawayId: g.id,
+                          title: g.title,
+                          prize: g.prize,
+                          casinoId: g.casinoId,
+                          endsAt: g.endsAt,
+                          winnerId: g.winnerId,
+                          winnerPickedAt: (g as any).winnerPickedAt || "",
+                          winnerPickedBy: (g as any).winnerPickedBy || "",
+                          winnerSeed: (g as any).winnerSeed || "",
+                        }));
+                      downloadCsv(`giveaway_winners_${new Date().toISOString().slice(0, 10)}.csv`, rows);
+                    }}
+                    data-testid="button-export-winners"
+                  >
+                    Export Winners CSV
+                  </Button>
+
+                  {isAdminLike && (
+                    <Dialog open={giveawayDialogOpen} onOpenChange={(open) => {
                   setGiveawayDialogOpen(open);
                   if (!open) {
                     setEditingGiveaway(null);
@@ -1373,6 +1512,8 @@ const deleteLeaderboard = useMutation({
                     </div>
                   </DialogContent>
                 </Dialog>
+                  )}
+                </div>
               </div>
 
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
@@ -1684,7 +1825,7 @@ const deleteLeaderboard = useMutation({
               </Dialog>
             </TabsContent>
 
-            <PlayersTab casinos={casinos} />
+            <PlayersTab casinos={casinos} canManagePayments={isAdminLike} />
 
             
 <TabsContent value="leaderboards">
@@ -1935,8 +2076,65 @@ const deleteLeaderboard = useMutation({
             <TabsContent value="site">
               <Card className="glass p-6">
                 <h2 className="font-display text-2xl text-white mb-2">Site Settings</h2>
-                <p className="text-muted-foreground mb-6">Update the public buttons/links without editing code.</p>
+                <p className="text-muted-foreground mb-6">Branding + public links (no code changes).</p>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Brand Name</Label>
+                    <Input value={siteBrandName} onChange={(e) => setSiteBrandName(e.target.value)} placeholder="GETSOME" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Header Logo</Label>
+                    <div className="flex items-center gap-4">
+                      {siteBrandLogoUrl ? (
+                        <img
+                          src={siteBrandLogoUrl}
+                          alt="Site logo"
+                          className="w-12 h-12 rounded-xl object-cover bg-white/5 border border-white/10"
+                        />
+                      ) : (
+                        <div className="w-12 h-12 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-white font-semibold">
+                          GS
+                        </div>
+                      )}
+                      <div className="flex-1">
+                        <Input
+                          type="file"
+                          accept="image/*"
+                          disabled={uploadingSiteLogo}
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            // allow selecting the same file again later
+                            e.currentTarget.value = "";
+                            if (!f) return;
+                            setUploadingSiteLogo(true);
+                            try {
+                              const url = await uploadSiteLogo(f);
+                              setSiteBrandLogoUrl(url);
+                              toast({ title: "Logo uploaded" });
+                            } catch (err: any) {
+                              toast({ title: "Logo upload failed", description: err?.message || "Upload failed", variant: "destructive" });
+                            } finally {
+                              setUploadingSiteLogo(false);
+                            }
+                          }}
+                        />
+                        <div className="flex items-center gap-2 mt-2">
+                          <Button type="button" variant="outline" size="sm" onClick={() => setSiteBrandLogoUrl("")} disabled={!siteBrandLogoUrl || uploadingSiteLogo}>
+                            Clear
+                          </Button>
+                          {uploadingSiteLogo ? (
+                            <span className="text-xs text-muted-foreground">Uploading...</span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Square PNG/SVG recommended</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Kick Live URL</Label>
                     <Input value={siteKickUrl} onChange={(e) => setSiteKickUrl(e.target.value)} />
@@ -1944,6 +2142,84 @@ const deleteLeaderboard = useMutation({
                   <div className="space-y-2">
                     <Label>Discord Invite URL</Label>
                     <Input value={siteDiscordUrl} onChange={(e) => setSiteDiscordUrl(e.target.value)} />
+                  </div>
+                </div>
+
+                <div className="mt-8 pt-6 border-t border-white/10">
+                  <h3 className="font-display text-xl text-white mb-2">Theme</h3>
+                  <p className="text-muted-foreground mb-6">Background + accents (applies site-wide).</p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-3">
+                      <Label>Background Image</Label>
+                      <div className="flex items-start gap-4">
+                        <div className="w-24 h-16 rounded-xl overflow-hidden border border-white/10 bg-white/5 shrink-0">
+                          <div className="w-full h-full bg-cover bg-center" style={{ backgroundImage: themeBgUrl ? `url(${themeBgUrl})` : "none" }} />
+                        </div>
+                        <div className="flex-1 space-y-2">
+                          <Input value={themeBgUrl} onChange={(e) => setThemeBgUrl(e.target.value)} placeholder="https://... (or upload below)" />
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            disabled={uploadingThemeBg}
+                            onChange={async (e) => {
+                              const f = e.target.files?.[0];
+                              e.currentTarget.value = "";
+                              if (!f) return;
+                              setUploadingThemeBg(true);
+                              try {
+                                const url = await uploadSiteBackground(f);
+                                setThemeBgUrl(url);
+                                toast({ title: "Background uploaded" });
+                              } catch (err: any) {
+                                toast({ title: "Upload failed", description: err?.message || "Upload failed", variant: "destructive" });
+                              } finally {
+                                setUploadingThemeBg(false);
+                              }
+                            }}
+                          />
+                          <div className="flex items-center gap-2">
+                            <Button type="button" variant="outline" size="sm" onClick={() => setThemeBgUrl("")} disabled={uploadingThemeBg || !themeBgUrl}>
+                              Clear
+                            </Button>
+                            {uploadingThemeBg ? (
+                              <span className="text-xs text-muted-foreground">Uploading...</span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">WebP recommended (keeps size small)</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-6">
+                      <div className="space-y-3">
+                        <Label>Overlay Darkness</Label>
+                        <div className="flex items-center gap-4">
+                          <Slider
+                            value={[Math.round(themeOverlay * 100)]}
+                            min={40}
+                            max={90}
+                            step={1}
+                            onValueChange={(v) => setThemeOverlay(Math.max(0.4, Math.min(0.9, (v?.[0] ?? 78) / 100)))}
+                          />
+                          <div className="w-14 text-right text-sm text-white/80 tabular-nums">{Math.round(themeOverlay * 100)}%</div>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Higher = darker background (better readability).</p>
+                      </div>
+
+                      <div className="space-y-3">
+                        <Label>Accent Color</Label>
+                        <div className="flex items-center gap-3">
+                          <Input type="color" value={themeAccent} onChange={(e) => setThemeAccent(e.target.value)} className="h-10 w-14 p-1" />
+                          <Input value={themeAccent} onChange={(e) => setThemeAccent(e.target.value)} className="font-mono" />
+                          <Button type="button" variant="outline" size="sm" onClick={() => setThemeAccent("#b026ff")}>
+                            Reset
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Controls primary buttons, focus rings, and glow accents.</p>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 <div className="flex justify-end mt-6">
@@ -2062,10 +2338,10 @@ function VerificationsTab() {
   });
 
   const verifyCasinoAccount = useMutation({
-    mutationFn: async (id: number) => {
-      return adminFetch(`/api/casino-accounts/${id}`, {
+    mutationFn: async (payload: { id: number; verified: boolean }) => {
+      return adminFetch(`/api/casino-accounts/${payload.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ verified: true }),
+        body: JSON.stringify({ verified: payload.verified }),
       });
     },
     onSuccess: () => {
@@ -2079,10 +2355,10 @@ function VerificationsTab() {
   });
 
   const verifyWallet = useMutation({
-    mutationFn: async (id: number) => {
-      return adminFetch(`/api/wallets/${id}`, {
+    mutationFn: async (payload: { id: number; verified: boolean }) => {
+      return adminFetch(`/api/wallets/${payload.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ verified: true }),
+        body: JSON.stringify({ verified: payload.verified }),
       });
     },
     onSuccess: () => {
@@ -2163,7 +2439,7 @@ function VerificationsTab() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => verifyCasinoAccount.mutate(a.id)}
+                          onClick={() => verifyCasinoAccount.mutate({ id: a.id, verified: true })}
                           disabled={verifyCasinoAccount.isPending}
                         >
                           Verify
@@ -2232,7 +2508,7 @@ function VerificationsTab() {
                         <Button
                           size="sm"
                           variant="outline"
-                          onClick={() => verifyWallet.mutate(w.id)}
+                          onClick={() => verifyWallet.mutate({ id: w.id, verified: true })}
                           disabled={verifyWallet.isPending}
                         >
                           Verify
@@ -2256,7 +2532,7 @@ function VerificationsTab() {
   );
 }
 
-function PlayersTab({ casinos }: { casinos: Casino[] }) {
+function PlayersTab({ casinos, canManagePayments }: { casinos: Casino[]; canManagePayments: boolean }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
@@ -2298,10 +2574,10 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
   });
 
   const verifyCasinoAccount = useMutation({
-    mutationFn: async (id: number) => {
-      return adminFetch(`/api/casino-accounts/${id}`, {
+    mutationFn: async (payload: { id: number; verified: boolean }) => {
+      return adminFetch(`/api/casino-accounts/${payload.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ verified: true }),
+        body: JSON.stringify({ verified: payload.verified }),
       });
     },
     onSuccess: () => {
@@ -2314,10 +2590,10 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
   });
 
   const verifyWallet = useMutation({
-    mutationFn: async (id: number) => {
-      return adminFetch(`/api/wallets/${id}`, {
+    mutationFn: async (payload: { id: number; verified: boolean }) => {
+      return adminFetch(`/api/wallets/${payload.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ verified: true }),
+        body: JSON.stringify({ verified: payload.verified }),
       });
     },
     onSuccess: () => {
@@ -2428,12 +2704,14 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                       <p className="text-sm text-muted-foreground">Kick: {userDetails.user.kickUsername}</p>
                     )}
                   </div>
+{canManagePayments && (
                   <div className="ml-auto text-right">
                     <div className="text-sm text-muted-foreground">Total Paid</div>
                     <div className="font-display text-2xl font-bold text-neon-gold">
                       ${parseFloat(userDetails.totalPayments || "0").toFixed(2)}
                     </div>
                   </div>
+                )}
                 </div>
 
                 <div>
@@ -2461,15 +2739,26 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => verifyCasinoAccount.mutate(account.id)}
+                                  onClick={() => verifyCasinoAccount.mutate({ id: account.id, verified: true })}
                                   disabled={verifyCasinoAccount.isPending}
                                   data-testid={`button-verify-casino-account-${account.id}`}
                                 >
                                   Verify
                                 </Button>
                               )}
+                              {account.verified && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => verifyCasinoAccount.mutate({ id: account.id, verified: false })}
+                                  disabled={verifyCasinoAccount.isPending}
+                                  data-testid={`button-unverify-casino-account-${account.id}`}
+                                >
+                                  Unverify
+                                </Button>
+                              )}
                               <Badge className={account.verified ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400"}>
-                                {account.verified ? "Verified" : "Pending"}
+                                {account.verified ? "Verified" : "Pending verification"}
                               </Badge>
                             </div>
                           </div>
@@ -2511,15 +2800,26 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => verifyWallet.mutate(wallet.id)}
+                                  onClick={() => verifyWallet.mutate({ id: wallet.id, verified: true })}
                                   disabled={verifyWallet.isPending}
                                   data-testid={`button-verify-wallet-${wallet.id}`}
                                 >
                                   Verify
                                 </Button>
                               )}
+                              {wallet.verified && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => verifyWallet.mutate({ id: wallet.id, verified: false })}
+                                  disabled={verifyWallet.isPending}
+                                  data-testid={`button-unverify-wallet-${wallet.id}`}
+                                >
+                                  Unverify
+                                </Button>
+                              )}
                               <Badge className={wallet.verified ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400"}>
-                                {wallet.verified ? "Verified" : "Pending"}
+                                {wallet.verified ? "Verified" : "Pending verification"}
                               </Badge>
                             </div>
                           </div>
@@ -2534,6 +2834,7 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                     <h4 className="font-display text-lg font-bold text-white flex items-center gap-2">
                       <DollarSign className="w-5 h-5 text-neon-gold" /> Payment History
                     </h4>
+                    {canManagePayments && (
                     <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
                       <DialogTrigger asChild>
                         <Button size="sm" className="font-display bg-neon-gold text-black hover:bg-neon-gold/80" data-testid="button-add-payment">
@@ -2595,6 +2896,7 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                         </div>
                       </DialogContent>
                     </Dialog>
+                    )}
                   </div>
                   {userDetails.payments.length === 0 ? (
                     <p className="text-muted-foreground text-sm">No payments recorded</p>
