@@ -7,6 +7,7 @@ import pg from "pg";
 import connectPgSimple from "connect-pg-simple";
 import { registerRoutes } from "./routes";
 import { startLeaderboardJobs } from "./leaderboardJobs";
+import { startGiveawayJobs } from "./giveawayJobs";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { setupAuth } from "./auth";
@@ -298,6 +299,10 @@ app.use(
 
   // Start best-effort background refresh for partner leaderboards.
   startLeaderboardJobs();
+
+  // Auto-end giveaways and pick winners after end time.
+  // Safe to run even if the service scales; writes are guarded by winnerId IS NULL.
+  startGiveawayJobs();
 
   app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
