@@ -35,6 +35,11 @@
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
+
+  /* Button/badge borders */
+  --color-primary-border: hsl(var(--primary) / 0.35);
+  --color-secondary-border: hsl(var(--secondary) / 0.35);
+  --color-destructive-border: hsl(var(--destructive) / 0.35);
   --color-chart-1: hsl(var(--chart-1));
   --color-chart-2: hsl(var(--chart-2));
   --color-chart-3: hsl(var(--chart-3));
@@ -91,6 +96,10 @@
   --font-display: 'Oxanium', sans-serif;
   --font-mono: 'Orbitron', monospace;
   --radius: 0.75rem;
+
+  /* Outline borders (used by Button/Badge outline variants) */
+  --button-outline: hsl(var(--foreground) / 0.14);
+  --badge-outline: hsl(var(--foreground) / 0.14);
 }
 
 @layer base {
@@ -176,4 +185,43 @@
       transform: translateY(-10px);
     }
   }
+
+
+  /* Premium interaction helpers used across UI components */
+  .hover-elevate {
+    transition-property: transform, filter;
+    transition-duration: 150ms;
+    transition-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+    will-change: transform;
+  }
+
+  .hover-elevate:hover {
+    transform: translateY(-1px);
+    filter: brightness(1.03);
+  }
+
+  .active-elevate-2:active {
+    transform: translateY(1px);
+    filter: brightness(0.97);
+  }
+
+  .hover-elevate:disabled,
+  .hover-elevate[aria-disabled="true"],
+  .active-elevate-2:disabled,
+  .active-elevate-2[aria-disabled="true"] {
+    transform: none;
+    filter: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hover-elevate {
+      transition: none;
+    }
+    .hover-elevate:hover,
+    .active-elevate-2:active {
+      transform: none;
+      filter: none;
+    }
+  }
+
 }

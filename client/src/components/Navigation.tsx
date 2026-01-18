@@ -154,14 +154,16 @@ export function Navigation() {
             )}
           </div>
 
-          <button
-            className="md:hidden text-white p-2"
+          <Button
+            variant="ghost"
+            size="icon"
+            className="md:hidden text-white border-white/10 hover:bg-white/5"
             onClick={() => setMobileOpen((v) => !v)}
             aria-label={mobileOpen ? "Close menu" : "Open menu"}
             data-testid="button-mobile-menu"
           >
             {mobileOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
+          </Button>
         </div>
       </div>
 

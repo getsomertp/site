@@ -58,6 +58,14 @@ export function ProvablyFairModal({ giveawayId, className }: { giveawayId: numbe
   const { data, isLoading, error } = useQuery<GiveawayProof>({
     queryKey: [`/api/giveaways/${giveawayId}/proof`],
     enabled: open,
+    // While the modal is open and the seed hasn't been revealed yet,
+    // poll so the UI updates immediately after a winner is picked.
+    refetchInterval: (query) => {
+      const d = query.state.data as GiveawayProof | undefined;
+      if (!open) return false;
+      if (!d) return 1000;
+      return d.revealedSeed ? false : 5000;
+    },
   });
 
   const status = useMemo(() => {
