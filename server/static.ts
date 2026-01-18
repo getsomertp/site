@@ -2,6 +2,24 @@ import express, { type Express } from "express";
 import fs from "fs";
 import path from "path";
 
+function isAssetLikePath(p: string) {
+  // If it looks like a file request (/assets/x.js, /favicon.png, /robots.txt, etc),
+  // we should NOT fall back to index.html.
+  if (p.startsWith("/assets/")) return true;
+  if (p.startsWith("/uploads/")) return true;
+  if (p === "/favicon.ico") return true;
+  // Any path that ends with an extension is an asset-like request.
+  return /\.[a-z0-9]+$/i.test(p);
+}
+
+function setNoCacheHtml(res: express.Response) {
+  // Strong no-cache headers for the HTML shell.
+  // This prevents the classic "cached HTML points at missing hashed assets" blank page.
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+}
+
 export function serveStatic(app: Express) {
   const distPath = path.resolve(__dirname, "public");
   if (!fs.existsSync(distPath)) {
@@ -20,7 +38,7 @@ export function serveStatic(app: Express) {
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {
           // Never cache the HTML shell so deploys update instantly.
-          res.setHeader("Cache-Control", "no-store");
+          setNoCacheHtml(res);
           return;
         }
 
@@ -36,9 +54,16 @@ export function serveStatic(app: Express) {
     }),
   );
 
-  // fall through to index.html if the file doesn't exist
-  app.use("*", (_req, res) => {
-    res.setHeader("Cache-Control", "no-store");
+  // Fall through to index.html for SPA routes only.
+  // IMPORTANT: do not serve index.html for missing assets (or you'll get
+  // "module script MIME type text/html" errors + a "blank" app).
+  app.use("*", (req, res) => {
+    if (isAssetLikePath(req.path)) {
+      res.status(404).end();
+      return;
+    }
+
+    setNoCacheHtml(res);
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }
