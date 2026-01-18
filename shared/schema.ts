@@ -46,6 +46,7 @@ export const users = pgTable("users", {
   kickUsername: text("kick_username"),
   kickVerified: boolean("kick_verified").notNull().default(false),
   isAdmin: boolean("is_admin").notNull().default(false),
+  role: text("role").notNull().default("user"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -119,6 +120,15 @@ export const giveaways = pgTable("giveaways", {
   casinoId: integer("casino_id").references(() => casinos.id, { onDelete: "set null" }),
   endsAt: timestamp("ends_at").notNull(),
   winnerId: varchar("winner_id").references(() => users.id),
+  winnerPickedAt: timestamp("winner_picked_at"),
+  winnerPickedBy: text("winner_picked_by"),
+  winnerSeed: text("winner_seed"),
+  // Provably-fair commitment (seed is hidden until reveal)
+  pfSeed: text("pf_seed"),
+  pfSeedHash: text("pf_seed_hash"),
+  pfEntriesHash: text("pf_entries_hash"),
+  pfWinnerEntryId: integer("pf_winner_entry_id"),
+  pfWinnerIndex: integer("pf_winner_index"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -167,6 +177,9 @@ export const adminAuditLogs = pgTable("admin_audit_logs", {
   entityType: text("entity_type"),
   entityId: text("entity_id"),
   details: text("details"),
+  actorUserId: varchar("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+  actorRole: text("actor_role"),
+  actorLabel: text("actor_label"),
   ip: text("ip"),
   userAgent: text("user_agent"),
   createdAt: timestamp("created_at").defaultNow(),

@@ -437,7 +437,7 @@ export class DatabaseStorage implements IStorage {
 
   // Giveaway Entries
   async getGiveawayEntries(giveawayId: number): Promise<GiveawayEntry[]> {
-    return db.select().from(giveawayEntries).where(eq(giveawayEntries.giveawayId, giveawayId));
+    return db.select().from(giveawayEntries).where(eq(giveawayEntries.giveawayId, giveawayId)).orderBy(asc(giveawayEntries.id));
   }
 
   async getGiveawayEntriesWithUsers(giveawayId: number): Promise<(GiveawayEntry & { user: User })[]> {
