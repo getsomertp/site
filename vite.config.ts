@@ -42,12 +42,34 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          // NOTE:
+          // Keep chunking simple and avoid accidental "react" matches like
+          // "lucide-react" or "@radix-ui/react-*" which can introduce
+          // circular inter-chunk initialization issues in some builds.
           if (!id.includes("node_modules")) return;
-          if (id.includes("react")) return "react";
-          if (id.includes("@tanstack")) return "tanstack";
-          if (id.includes("@radix-ui")) return "radix";
-          if (id.includes("framer-motion")) return "motion";
-          if (id.includes("recharts") || id.includes("d3")) return "charts";
+
+          const nm = id.split("node_modules/")[1] || "";
+
+          // UI libs
+          if (nm.startsWith("@radix-ui/")) return "radix";
+          if (nm.startsWith("@tanstack/")) return "tanstack";
+
+          // React core only
+          if (
+            nm.startsWith("react/") ||
+            nm === "react" ||
+            nm.startsWith("react-dom/") ||
+            nm === "react-dom" ||
+            nm.startsWith("scheduler/") ||
+            nm === "scheduler"
+          ) {
+            return "react";
+          }
+
+          // Animations + charts
+          if (nm.includes("framer-motion")) return "motion";
+          if (nm.includes("recharts") || nm.includes("d3")) return "charts";
+
           return "vendor";
         },
       },
