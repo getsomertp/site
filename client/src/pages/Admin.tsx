@@ -2049,8 +2049,17 @@ const deleteLeaderboard = useMutation({
 
         <div className="space-y-2 md:col-span-2">
           <Label>Mapping JSON</Label>
-          <Textarea rows={8} value={leaderboardForm.mappingJson} onChange={(e) => setLeaderboardForm((p) => ({ ...p, apiMappingJson: e.target.value }))} />
-          <p className="text-xs text-muted-foreground">Example: {{"itemsPath":"data.items","rankFieldPath":"rank","usernameFieldPath":"username","userIdFieldPath":"id","valueFieldPath":"value"}}</p>
+          <Textarea
+            rows={8}
+            value={leaderboardForm.apiMappingJson}
+            onChange={(e) => setLeaderboardForm((p) => ({ ...p, apiMappingJson: e.target.value }))}
+          />
+          <p className="text-xs text-muted-foreground">
+            Example:{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
+              {`{"itemsPath":"data.items","rankFieldPath":"rank","usernameFieldPath":"username","userIdFieldPath":"id","valueFieldPath":"value"}`}
+            </code>
+          </p>
         </div>
       </div>
 
