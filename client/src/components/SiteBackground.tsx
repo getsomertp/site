@@ -1,7 +1,7 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
-import defaultBg from "@assets/generated_images/dark_neon_casino_background.png";
+import defaultBg from "@assets/generated_images/dark_neon_casino_background.webp";
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -15,6 +15,41 @@ function parseOverlay(v: unknown, fallback = 0.78) {
   return clamp(n, 0.4, 0.9);
 }
 
+function useImageReady(src: string) {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    setReady(false);
+
+    const img = new Image();
+    // Hint the browser to decode off the main thread when possible.
+    (img as any).decoding = "async";
+    img.src = src;
+
+    if (img.complete) {
+      setReady(true);
+      return;
+    }
+
+    img.onload = () => {
+      if (!alive) return;
+      setReady(true);
+    };
+    img.onerror = () => {
+      // If the URL is invalid, don’t block the UI — we’ll still show overlays.
+      if (!alive) return;
+      setReady(true);
+    };
+
+    return () => {
+      alive = false;
+    };
+  }, [src]);
+
+  return ready;
+}
+
 export function SiteBackground() {
   const { data: settingsRaw } = useQuery<Record<string, string> | null>({
     queryKey: ["/api/site/settings"],
@@ -26,6 +61,7 @@ export function SiteBackground() {
 
   const bgUrl = String(settings.themeBackgroundUrl || settings.bgUrl || "").trim() || defaultBg;
   const overlay = parseOverlay(settings.themeOverlay, 0.78);
+  const ready = useImageReady(bgUrl);
 
   const bgStyle = useMemo(() => {
     // Keep it crisp, but readable.
@@ -34,13 +70,28 @@ export function SiteBackground() {
       backgroundSize: "cover",
       backgroundPosition: "center",
       filter: "saturate(1.1) contrast(1.05) brightness(0.85)",
-      transform: "scale(1.02)",
     } as const;
   }, [bgUrl]);
 
   return (
     <div aria-hidden className="pointer-events-none fixed inset-0 z-0">
-      <div className="absolute inset-0" style={bgStyle} />
+      {/* Fast paint baseline */}
+      <div
+        className="absolute inset-0"
+        style={{
+          background:
+            "radial-gradient(1200px 600px at 25% 20%, rgba(180,38,255,0.12), transparent 60%)," +
+            "radial-gradient(900px 520px at 80% 30%, rgba(255,196,76,0.08), transparent 62%)," +
+            "radial-gradient(1000px 700px at 70% 85%, rgba(255,64,180,0.06), transparent 65%)," +
+            "linear-gradient(180deg, rgba(0,0,0,0.65), rgba(0,0,0,0.85))",
+        }}
+      />
+
+      {/* Real background image fades in when decoded (avoids a “blank” first paint) */}
+      <div
+        className="absolute inset-0 transition-opacity duration-700"
+        style={{ ...bgStyle, opacity: ready ? 1 : 0 }}
+      />
 
       {/* Darkness overlay (admin adjustable) */}
       <div className="absolute inset-0" style={{ background: `rgba(0,0,0,${overlay})` }} />

@@ -329,7 +329,7 @@ export default function Home() {
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     {c.logo ? (
-                      <img
+                      <img loading="lazy" decoding="async"
                         src={c.logo}
                         alt={`${c.name} logo`}
                         className="w-10 h-10 rounded-xl object-cover"

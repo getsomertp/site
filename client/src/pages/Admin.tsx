@@ -968,7 +968,7 @@ const deleteLeaderboard = useMutation({
                         <Label>Casino Logo</Label>
                         <div className="flex items-center gap-3">
                           {casinoForm.logo ? (
-                            <img src={casinoForm.logo} alt="Casino logo" className="w-12 h-12 rounded-xl object-cover border border-white/10" />
+                            <img loading="lazy" decoding="async" src={casinoForm.logo} alt="Casino logo" className="w-12 h-12 rounded-xl object-cover border border-white/10" />
                           ) : (
                             <div className="w-12 h-12 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-white font-semibold">
                               {(casinoForm.name || "").slice(0, 2).toUpperCase()}
@@ -1209,7 +1209,7 @@ const deleteLeaderboard = useMutation({
                     <Card key={casino.id} className="glass p-6" data-testid={`admin-casino-${casino.id}`}>
                       <div className="flex items-center gap-4">
                         {casino.logo ? (
-                          <img
+                          <img loading="lazy" decoding="async"
                             src={casino.logo}
                             alt={`${casino.name} logo`}
                             className="w-14 h-14 rounded-xl object-cover border border-white/10 bg-white/5"
@@ -1796,7 +1796,7 @@ const deleteLeaderboard = useMutation({
                                   <div className="flex items-center gap-2 min-w-0">
                                     <div className="w-8 h-8 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white">
                                       {e.user?.discordAvatarUrl ? (
-                                        <img src={e.user.discordAvatarUrl} alt="" className="w-full h-full object-cover" />
+                                        <img loading="lazy" decoding="async" src={e.user.discordAvatarUrl} alt="" className="w-full h-full object-cover" />
                                       ) : (
                                         (e.user?.discordUsername || e.user?.kickUsername || "?")
                                           .slice(0, 1)
@@ -2087,7 +2087,7 @@ const deleteLeaderboard = useMutation({
                     <Label>Header Logo</Label>
                     <div className="flex items-center gap-4">
                       {siteBrandLogoUrl ? (
-                        <img
+                        <img loading="lazy" decoding="async"
                           src={siteBrandLogoUrl}
                           alt="Site logo"
                           className="w-12 h-12 rounded-xl object-cover bg-white/5 border border-white/10"
@@ -2418,7 +2418,7 @@ function VerificationsTab() {
                       <div className="flex items-start gap-3 min-w-0">
                         <div className="w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white shrink-0">
                           {discordAvatarUrl(a.user) ? (
-                            <img src={discordAvatarUrl(a.user)!} alt="" className="w-full h-full object-cover" />
+                            <img loading="lazy" decoding="async" src={discordAvatarUrl(a.user)!} alt="" className="w-full h-full object-cover" />
                           ) : (
                             (a.user.discordUsername || a.user.kickUsername || "?").slice(0, 1).toUpperCase()
                           )}
@@ -2476,7 +2476,7 @@ function VerificationsTab() {
                       <div className="flex items-start gap-3 min-w-0">
                         <div className="w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white shrink-0">
                           {discordAvatarUrl(w.user) ? (
-                            <img src={discordAvatarUrl(w.user)!} alt="" className="w-full h-full object-cover" />
+                            <img loading="lazy" decoding="async" src={discordAvatarUrl(w.user)!} alt="" className="w-full h-full object-cover" />
                           ) : (
                             (w.user.discordUsername || w.user.kickUsername || "?").slice(0, 1).toUpperCase()
                           )}
@@ -2648,7 +2648,7 @@ function PlayersTab({ casinos, canManagePayments }: { casinos: Casino[]; canMana
                   >
                     <div className="flex items-center gap-3">
                       {user.discordAvatar ? (
-                        <img 
+                        <img loading="lazy" decoding="async" 
                           src={`https://cdn.discordapp.com/avatars/${user.discordId}/${user.discordAvatar}.png`} 
                           alt="" 
                           className="w-10 h-10 rounded-full"
@@ -2685,7 +2685,7 @@ function PlayersTab({ casinos, canManagePayments }: { casinos: Casino[]; canMana
               <div className="space-y-6">
                 <div className="flex items-center gap-4 pb-4 border-b border-white/10">
                   {userDetails.user.discordAvatar ? (
-                    <img 
+                    <img loading="lazy" decoding="async" 
                       src={`https://cdn.discordapp.com/avatars/${userDetails.user.discordId}/${userDetails.user.discordAvatar}.png`} 
                       alt="" 
                       className="w-16 h-16 rounded-full"

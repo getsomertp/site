@@ -102,7 +102,7 @@ export default function Partners() {
                     <Card className="glass p-6">
                       <div className="flex items-center gap-3">
                         {c.logo ? (
-                          <img
+                          <img loading="lazy" decoding="async"
                             src={c.logo}
                             alt={`${c.name} logo`}
                             className="w-12 h-12 rounded-2xl object-cover bg-white/5"

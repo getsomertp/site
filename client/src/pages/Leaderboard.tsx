@@ -243,7 +243,7 @@ export default function Leaderboard() {
                       {selectedCasino && (
                         <div className="flex items-center gap-3 p-3 bg-white/5 rounded-lg">
                           {selectedCasino.logo ? (
-                            <img src={selectedCasino.logo} alt={selectedCasino.name} className="w-12 h-12 rounded-lg object-contain" />
+                            <img loading="lazy" decoding="async" src={selectedCasino.logo} alt={selectedCasino.name} className="w-12 h-12 rounded-lg object-contain" />
                           ) : (
                             <div 
                               className="w-12 h-12 rounded-lg flex items-center justify-center font-display font-bold text-white"

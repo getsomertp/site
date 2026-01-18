@@ -149,7 +149,7 @@ export default function Affiliates() {
                             style={casino.color ? { backgroundColor: casino.color } : undefined}
                           >
                             {casino.logo ? (
-                              <img
+                              <img loading="lazy" decoding="async"
                                 src={casino.logo}
                                 alt={casino.name}
                                 className="w-full h-full object-contain rounded-2xl bg-white/5"

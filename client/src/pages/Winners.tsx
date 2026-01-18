@@ -118,7 +118,7 @@ export default function Winners() {
                       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                         <div className="flex items-center gap-4 min-w-0">
                           {avatar ? (
-                            <img
+                            <img loading="lazy" decoding="async"
                               src={avatar}
                               alt=""
                               className="w-12 h-12 rounded-full border border-white/10"
@@ -148,7 +148,7 @@ export default function Winners() {
                           {casinoName ? (
                             <div className="flex items-center gap-2">
                               {casinoLogo ? (
-                                <img src={casinoLogo} alt="" className="w-7 h-7 rounded-md border border-white/10" />
+                                <img loading="lazy" decoding="async" src={casinoLogo} alt="" className="w-7 h-7 rounded-md border border-white/10" />
                               ) : (
                                 <div className="w-7 h-7 rounded-md bg-white/10 border border-white/10" />
                               )}

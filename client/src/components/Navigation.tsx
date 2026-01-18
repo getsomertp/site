@@ -103,6 +103,9 @@ export function Navigation() {
                 <img
                   src={brandLogoUrl}
                   alt={`${brandName} logo`}
+                  loading="eager"
+                  decoding="async"
+                  fetchPriority="high"
                   className="w-12 h-12 rounded-xl object-cover bg-white/5 border border-white/10"
                 />
               ) : (
@@ -139,6 +142,8 @@ export function Navigation() {
                       <img
                         src={avatarUrl}
                         alt="Discord avatar"
+                        loading="lazy"
+                        decoding="async"
                         className="w-6 h-6 rounded-full border border-white/10"
                         referrerPolicy="no-referrer"
                       />

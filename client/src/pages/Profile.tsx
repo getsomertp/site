@@ -282,7 +282,7 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
             {profileLoading ? (
               <div className="h-14 w-14 rounded-full border border-white/10 bg-white/5" />
             ) : profile?.discordAvatar ? (
-              <img
+              <img loading="lazy" decoding="async"
                 src={profile.discordAvatar}
                 alt="Avatar"
                 className="h-14 w-14 rounded-full border border-white/10 object-cover"
@@ -448,7 +448,7 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
                           {casino.logo ? (
-                            <img src={casino.logo} alt={casino.name} className="h-10 w-10 rounded-full object-cover" />
+                            <img loading="lazy" decoding="async" src={casino.logo} alt={casino.name} className="h-10 w-10 rounded-full object-cover" />
                           ) : (
                             <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center text-xs font-bold">
                               {casino.name.slice(0, 2).toUpperCase()}
@@ -584,7 +584,7 @@ const setupProgress = Math.round((setupStepsDone / 3) * 100);
                       <div className="flex items-center justify-between gap-4">
                         <div className="flex items-center gap-3">
                           {casino.logo ? (
-                            <img src={casino.logo} alt={casino.name} className="h-10 w-10 rounded-full object-cover" />
+                            <img loading="lazy" decoding="async" src={casino.logo} alt={casino.name} className="h-10 w-10 rounded-full object-cover" />
                           ) : (
                             <div className="h-10 w-10 rounded-full bg-muted flex items-center justify-center text-xs font-bold">
                               {casino.name.slice(0, 2).toUpperCase()}
