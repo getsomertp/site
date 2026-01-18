@@ -9,7 +9,8 @@ const buttonVariants = cva(
   // - strong focus ring
   // - consistent sizing
   // - crisp hover/press feedback (via hover-elevate / active-elevate-2 utilities)
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-semibold tracking-tight transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-55 disabled:shadow-none disabled:transform-none select-none [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0" +
+  // leading-none prevents occasional font-metric clipping (Safari/Windows) and keeps labels perfectly centered.
+  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-lg text-sm font-semibold tracking-tight leading-none transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-55 disabled:shadow-none disabled:transform-none select-none [&_svg]:pointer-events-none [&_svg]:size-4 [&_svg]:shrink-0" +
     " hover-elevate active-elevate-2",
   {
     variants: {
@@ -19,7 +20,7 @@ const buttonVariants = cva(
         destructive:
           "bg-destructive text-destructive-foreground border border-destructive-border shadow-sm hover:shadow-md active:shadow-sm",
         outline:
-          "bg-transparent border [border-color:var(--button-outline)] shadow-sm hover:shadow-md hover:bg-muted/35 active:shadow-sm",
+          "bg-white/[0.03] border [border-color:var(--button-outline)] shadow-sm hover:shadow-md hover:bg-white/[0.06] active:shadow-sm",
         secondary:
           "bg-secondary text-secondary-foreground border border-secondary-border shadow-sm hover:shadow-md active:shadow-sm",
         ghost:

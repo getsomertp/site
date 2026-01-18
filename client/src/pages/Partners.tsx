@@ -121,20 +121,23 @@ export default function Partners() {
                       </div>
 
                       <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <Button variant="outline" asChild className="w-full">
+                        <Button variant="outline" size="sm" asChild className="w-full">
                           <a href={lbUrl}>
-                            <Trophy className="w-4 h-4 mr-2" /> Leaderboard
+                            <Trophy className="w-4 h-4" />
+                            <span>Leaderboard</span>
                           </a>
                         </Button>
-                        <Button variant="outline" asChild className="w-full">
+                        <Button variant="outline" size="sm" asChild className="w-full">
                           <a href="/giveaways">
-                            <Gift className="w-4 h-4 mr-2" /> Giveaways
+                            <Gift className="w-4 h-4" />
+                            <span>Giveaways</span>
                           </a>
                         </Button>
                         {playUrl ? (
                           <Button asChild className="w-full">
                             <a href={playUrl} target="_blank" rel="noreferrer noopener">
-                              Play <ExternalLink className="w-4 h-4 ml-2" />
+                              <span>Play</span>
+                              <ExternalLink className="w-4 h-4" />
                             </a>
                           </Button>
                         ) : (

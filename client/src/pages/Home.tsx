@@ -186,6 +186,7 @@ export default function Home() {
   const showNoGiveaways = !giveawaysLoading && activeGiveaways.length === 0;
 
 
+  const brandName = siteSettings.brandName || "GETSOME";
   const kickUrl = siteSettings.kickUrl || "https://kick.com/get-some";
   const discordUrl = siteSettings.discordUrl || "https://discord.gg/";
 
@@ -218,7 +219,7 @@ export default function Home() {
               className="lg:col-span-12"
             >
               <h1 className="font-display text-4xl md:text-6xl font-bold text-white leading-tight">
-                GETSOME Stream Hub
+                {brandName}
               </h1>
               <p className="mt-4 text-lg text-muted-foreground">
                 Live giveaways, leaderboards, and stream games — all in one place.

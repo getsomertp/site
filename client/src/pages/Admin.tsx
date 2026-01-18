@@ -1,27 +1,3 @@
-
-async function uploadCasinoLogo(file: File): Promise<string> {
-  const fd = new FormData();
-  fd.append("logo", file);
-  const res = await fetch("/api/admin/uploads/casino-logo", {
-    method: "POST",
-    body: fd,
-    credentials: "include",
-  });
-  if (!res.ok) {
-    const txt = await res.text();
-    // Try JSON first, fall back to raw text
-    try {
-      const j = JSON.parse(txt);
-      throw new Error(j?.error || j?.message || "Upload failed");
-    } catch {
-      throw new Error(txt || "Upload failed");
-    }
-  }
-  const data = await res.json();
-  if (!data?.url) throw new Error("Upload failed: missing url");
-  return data.url as string;
-}
-
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
@@ -98,6 +74,51 @@ async function adminFetch(url: string, options: RequestInit = {}) {
     throw new Error(`Non-JSON response from ${url} (${res.status}). This usually means the API route was not found and the app returned HTML instead. Preview: ${preview}`);
   }
   return res.json();
+}
+
+async function uploadCasinoLogo(file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("logo", file);
+  const res = await fetch("/api/admin/uploads/casino-logo", {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    // Try JSON first, fall back to raw text
+    try {
+      const j = JSON.parse(txt);
+      throw new Error(j?.error || j?.message || "Upload failed");
+    } catch {
+      throw new Error(txt || "Upload failed");
+    }
+  }
+  const data = await res.json();
+  if (!data?.url) throw new Error("Upload failed: missing url");
+  return data.url as string;
+}
+
+async function uploadSiteLogo(file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("logo", file);
+  const res = await fetch("/api/admin/uploads/site-logo", {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    try {
+      const j = JSON.parse(txt);
+      throw new Error(j?.error || j?.message || "Upload failed");
+    } catch {
+      throw new Error(txt || "Upload failed");
+    }
+  }
+  const data = await res.json();
+  if (!data?.url) throw new Error("Upload failed: missing url");
+  return data.url as string;
 }
 
 type CasinoFormData = {
@@ -307,6 +328,9 @@ const [auditSearch, setAuditSearch] = useState("");
   // Site settings
   const [siteKickUrl, setSiteKickUrl] = useState("https://kick.com/get-some");
   const [siteDiscordUrl, setSiteDiscordUrl] = useState("https://discord.gg/");
+  const [siteBrandName, setSiteBrandName] = useState("GETSOME");
+  const [siteBrandLogoUrl, setSiteBrandLogoUrl] = useState("");
+  const [uploadingSiteLogo, setUploadingSiteLogo] = useState(false);
 
   // Leaderboards
   const [leaderboardDialogOpen, setLeaderboardDialogOpen] = useState(false);
@@ -345,7 +369,7 @@ const [auditSearch, setAuditSearch] = useState("");
   // Site settings
   const { data: siteSettings = {} } = useQuery<Record<string, string>>({
     queryKey: ["/api/admin/site/settings"],
-    queryFn: () => adminFetch("/api/admin/site-settings"),
+    queryFn: () => adminFetch("/api/admin/site/settings"),
     enabled: isAdminLike === true,
   });
 
@@ -360,6 +384,8 @@ const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAudi
   useEffect(() => {
     if (siteSettings?.kickUrl) setSiteKickUrl(siteSettings.kickUrl);
     if (siteSettings?.discordUrl) setSiteDiscordUrl(siteSettings.discordUrl);
+    if (siteSettings?.brandName) setSiteBrandName(siteSettings.brandName);
+    if (siteSettings?.brandLogoUrl) setSiteBrandLogoUrl(siteSettings.brandLogoUrl);
   }, [siteSettings]);
 
   // Leaderboards
@@ -462,6 +488,14 @@ const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAudi
   // Site settings mutation
   const saveSiteSettings = useMutation({
     mutationFn: async () => {
+      await adminFetch("/api/admin/site/settings", {
+        method: "POST",
+        body: JSON.stringify({ key: "brandName", value: (siteBrandName || "GETSOME").trim() || "GETSOME" }),
+      });
+      await adminFetch("/api/admin/site/settings", {
+        method: "POST",
+        body: JSON.stringify({ key: "brandLogoUrl", value: siteBrandLogoUrl || "" }),
+      });
       await adminFetch("/api/admin/site/settings", {
         method: "POST",
         body: JSON.stringify({ key: "kickUrl", value: siteKickUrl }),
@@ -1988,8 +2022,65 @@ const deleteLeaderboard = useMutation({
             <TabsContent value="site">
               <Card className="glass p-6">
                 <h2 className="font-display text-2xl text-white mb-2">Site Settings</h2>
-                <p className="text-muted-foreground mb-6">Update the public buttons/links without editing code.</p>
+                <p className="text-muted-foreground mb-6">Branding + public links (no code changes).</p>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Brand Name</Label>
+                    <Input value={siteBrandName} onChange={(e) => setSiteBrandName(e.target.value)} placeholder="GETSOME" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Header Logo</Label>
+                    <div className="flex items-center gap-4">
+                      {siteBrandLogoUrl ? (
+                        <img
+                          src={siteBrandLogoUrl}
+                          alt="Site logo"
+                          className="w-12 h-12 rounded-xl object-cover bg-white/5 border border-white/10"
+                        />
+                      ) : (
+                        <div className="w-12 h-12 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-white font-semibold">
+                          GS
+                        </div>
+                      )}
+                      <div className="flex-1">
+                        <Input
+                          type="file"
+                          accept="image/*"
+                          disabled={uploadingSiteLogo}
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            // allow selecting the same file again later
+                            e.currentTarget.value = "";
+                            if (!f) return;
+                            setUploadingSiteLogo(true);
+                            try {
+                              const url = await uploadSiteLogo(f);
+                              setSiteBrandLogoUrl(url);
+                              toast({ title: "Logo uploaded" });
+                            } catch (err: any) {
+                              toast({ title: "Logo upload failed", description: err?.message || "Upload failed", variant: "destructive" });
+                            } finally {
+                              setUploadingSiteLogo(false);
+                            }
+                          }}
+                        />
+                        <div className="flex items-center gap-2 mt-2">
+                          <Button type="button" variant="outline" size="sm" onClick={() => setSiteBrandLogoUrl("")} disabled={!siteBrandLogoUrl || uploadingSiteLogo}>
+                            Clear
+                          </Button>
+                          {uploadingSiteLogo ? (
+                            <span className="text-xs text-muted-foreground">Uploading...</span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Square PNG/SVG recommended</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Kick Live URL</Label>
                     <Input value={siteKickUrl} onChange={(e) => setSiteKickUrl(e.target.value)} />

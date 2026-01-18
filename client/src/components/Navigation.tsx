@@ -2,8 +2,15 @@ import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, X, Trophy, Gift, Handshake, LogIn, Settings, Zap, User, Crown, Building2 } from "lucide-react";
+import { Menu, X, Trophy, Gift, Handshake, LogIn, Settings, Zap, User, Crown, Building2, ChevronDown, LogOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { getQueryFn } from "@/lib/queryClient";
 import { useSession } from "@/hooks/useSession";
 
@@ -23,6 +30,16 @@ const publicLinks = [
 export function Navigation() {
   const [location] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Public site settings (branding)
+  const { data: siteSettingsRaw } = useQuery<Record<string, string> | null>({
+    queryKey: ["/api/site/settings"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 60_000,
+  });
+  const siteSettings = (siteSettingsRaw as any) || {};
+  const brandName = String(siteSettings.brandName || "GETSOME");
+  const brandLogoUrl = siteSettings.brandLogoUrl ? String(siteSettings.brandLogoUrl) : null;
 
   // Session user (Discord login)
   const { data: session } = useSession();
@@ -79,21 +96,29 @@ export function Navigation() {
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 glass">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-20">
+        <div className="flex items-center h-20 gap-6">
           <Link href="/" data-testid="link-home">
             <motion.div className="flex items-center gap-3 cursor-pointer" whileHover={{ scale: 1.02 }}>
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-neon-purple to-neon-gold flex items-center justify-center">
-                <span className="font-display font-bold text-xl text-white">GS</span>
-              </div>
-              <span className="font-display font-bold text-2xl text-white text-glow-purple">GETSOME</span>
+              {brandLogoUrl ? (
+                <img
+                  src={brandLogoUrl}
+                  alt={`${brandName} logo`}
+                  className="w-12 h-12 rounded-xl object-cover bg-white/5 border border-white/10"
+                />
+              ) : (
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-neon-purple to-neon-gold flex items-center justify-center">
+                  <span className="font-display font-bold text-xl text-white">GS</span>
+                </div>
+              )}
+              <span className="font-display font-bold text-2xl text-white text-glow-purple">{brandName}</span>
             </motion.div>
           </Link>
 
-          <div className="hidden md:flex items-center gap-8">
+          <div className="hidden md:flex flex-1 items-center justify-center gap-6">
             {navLinks.map((link) => (
               <Link key={link.href} href={link.href}>
                 <motion.span
-                  className={`font-display text-sm uppercase tracking-wider cursor-pointer transition-colors ${
+                  className={`font-sans text-xs font-semibold uppercase tracking-[0.14em] whitespace-nowrap cursor-pointer transition-colors ${
                     location === link.href ? "text-neon-gold text-glow-gold" : "text-muted-foreground hover:text-white"
                   }`}
                   whileHover={{ y: -2 }}
@@ -105,41 +130,53 @@ export function Navigation() {
             ))}
           </div>
 
-          <div className="hidden md:flex items-center gap-4">
+          <div className="hidden md:flex items-center gap-3 shrink-0">
             {(isLoggedIn || isAdmin) ? (
-              <div className="flex items-center gap-3">
-                {isLoggedIn ? (
-                  <Link href="/profile">
-                    <div className="flex items-center gap-2 cursor-pointer">
-                      {avatarUrl ? (
-                        <img
-                          src={avatarUrl}
-                          alt="Discord avatar"
-                          className="w-8 h-8 rounded-full border border-white/10"
-                          referrerPolicy="no-referrer"
-                        />
-                      ) : (
-                        <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs text-white">
-                          {String((sessionUser as any)?.discordUsername || "U").slice(0, 2).toUpperCase()}
-                        </div>
-                      )}
-                      <span className="text-sm text-white/90 max-w-[140px] truncate">
-                        {(sessionUser as any)?.discordUsername || (isAdmin ? "Admin" : "Account")}
-                      </span>
-                    </div>
-                  </Link>
-                ) : (
-                  <span className="text-sm text-white/80">Admin session</span>
-                )}
-
-                <Button
-                  variant="outline"
-                  className="font-display border-white/15 text-white hover:bg-white/5"
-                  onClick={logoutAll}
-                >
-                  Logout
-                </Button>
-              </div>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" className="border-white/15 text-white hover:bg-white/5 gap-2">
+                    {avatarUrl ? (
+                      <img
+                        src={avatarUrl}
+                        alt="Discord avatar"
+                        className="w-6 h-6 rounded-full border border-white/10"
+                        referrerPolicy="no-referrer"
+                      />
+                    ) : (
+                      <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-[10px] text-white">
+                        {String((sessionUser as any)?.discordUsername || (isAdmin ? "Admin" : "U")).slice(0, 2).toUpperCase()}
+                      </div>
+                    )}
+                    <span className="text-sm font-medium">
+                      {isLoggedIn ? (sessionUser as any)?.discordUsername || "Account" : "Admin"}
+                    </span>
+                    <ChevronDown className="w-4 h-4 opacity-75" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  {isLoggedIn ? (
+                    <Link href="/profile">
+                      <DropdownMenuItem className="cursor-pointer">
+                        <User className="w-4 h-4" />
+                        <span>Profile</span>
+                      </DropdownMenuItem>
+                    </Link>
+                  ) : null}
+                  {isAdmin ? (
+                    <Link href="/admin">
+                      <DropdownMenuItem className="cursor-pointer">
+                        <Settings className="w-4 h-4" />
+                        <span>Admin</span>
+                      </DropdownMenuItem>
+                    </Link>
+                  ) : null}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="cursor-pointer" onClick={logoutAll}>
+                    <LogOut className="w-4 h-4" />
+                    <span>Logout</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : (
               <Button
                 className="font-display bg-[#5865F2] hover:bg-[#4752C4] text-white gap-2"
@@ -181,7 +218,7 @@ export function Navigation() {
                 return (
                   <Link key={link.href} href={link.href}>
                     <div
-                      className={`flex items-center gap-3 font-display text-lg py-2 ${
+                      className={`flex items-center gap-3 font-sans text-base font-semibold py-2 ${
                         location === link.href ? "text-neon-gold" : "text-white"
                       }`}
                       onClick={() => setMobileOpen(false)}
@@ -196,14 +233,14 @@ export function Navigation() {
               {(isLoggedIn || isAdmin) ? (
                 <Button
                   variant="outline"
-                  className="w-full font-display border-white/15 text-white hover:bg-white/5 gap-2 mt-4"
+                  className="w-full font-sans border-white/15 text-white hover:bg-white/5 gap-2 mt-4"
                   onClick={logoutAll}
                 >
                   Logout
                 </Button>
               ) : (
                 <Button
-                  className="w-full font-display bg-[#5865F2] hover:bg-[#4752C4] text-white gap-2 mt-4"
+                  className="w-full font-sans bg-[#5865F2] hover:bg-[#4752C4] text-white gap-2 mt-4"
                   data-testid="button-discord-login-mobile"
                   onClick={beginDiscordLogin}
                 >
