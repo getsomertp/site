@@ -49,6 +49,12 @@ function sha256Hex(input: string): string {
   return crypto.createHash("sha256").update(String(input)).digest("hex");
 }
 
+
+function setPublicCache(res: Response, seconds: number, swrSeconds?: number) {
+  const swr = swrSeconds ?? Math.max(30, seconds * 10);
+  res.setHeader("Cache-Control", `public, max-age=${seconds}, stale-while-revalidate=${swr}`);
+}
+
 // Hide server-side provably-fair secret seed from all API responses.
 function stripGiveawaySecrets(g: any) {
   if (!g) return g;
@@ -886,6 +892,7 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   // Get all active casinos
   app.get("/api/casinos", async (req: Request, res: Response) => {
     try {
+      setPublicCache(res, 60);
       const casinos = await storage.getCasinos();
       res.json(casinos);
     } catch (error) {
@@ -909,6 +916,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
   // Get single casino
   app.get("/api/casinos/:id", async (req: Request, res: Response) => {
     try {
+      setPublicCache(res, 60);
       const id = parseInt(req.params.id);
       const casino = await storage.getCasino(id);
       if (!casino) {
@@ -992,6 +1000,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
   // Public: minimal settings for buttons/links
   app.get("/api/site/settings", async (_req: Request, res: Response) => {
     try {
+      setPublicCache(res, 60);
       const rows = await storage.getSiteSettings();
       const out: Record<string, string> = {};
       for (const r of rows) out[r.key] = r.value;
@@ -1044,6 +1053,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
   // Public: list active leaderboards (no secrets)
   app.get("/api/leaderboards/active", async (_req: Request, res: Response) => {
     try {
+      setPublicCache(res, 15);
       const lbs = await storage.getActiveLeaderboards();
       // Strip sensitive API config for public responses
       const publicLbs = lbs.map((l) => ({
@@ -1172,6 +1182,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
   // Get all giveaways
   app.get("/api/giveaways", async (req: Request, res: Response) => {
     try {
+      setPublicCache(res, 10);
       const giveaways = await storage.getGiveaways();
       const userId = (req.session as any)?.userId as string | undefined;
 
@@ -1181,15 +1192,17 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
 
       const enteredSet = userId ? new Set(await storage.getUserEnteredGiveawayIds(userId)) : null;
 
-      const giveawaysWithDetails = await Promise.all(
-        giveaways.map(async (g) => ({
-          ...stripGiveawaySecrets(g),
-          entries: await storage.getGiveawayEntryCount(g.id),
-          requirements: withImplicitGiveawayRequirements(g, await storage.getGiveawayRequirements(g.id)),
-          hasEntered: enteredSet ? enteredSet.has(g.id) : false,
-          winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
-        }))
-      );
+      const giveawayIds = giveaways.map((g: any) => Number(g.id));
+      const countsMap = await storage.getGiveawayEntryCounts(giveawayIds);
+      const reqsMap = await storage.getGiveawayRequirementsForGiveaways(giveawayIds);
+
+      const giveawaysWithDetails = giveaways.map((g: any) => ({
+        ...stripGiveawaySecrets(g),
+        entries: Number(countsMap[Number(g.id)] || 0),
+        requirements: withImplicitGiveawayRequirements(g, reqsMap[Number(g.id)] || []),
+        hasEntered: enteredSet ? enteredSet.has(Number(g.id)) : false,
+        winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
+      }));
 
       res.json(giveawaysWithDetails);
     } catch (error) {
@@ -1209,15 +1222,17 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
 
       const enteredSet = userId ? new Set(await storage.getUserEnteredGiveawayIds(userId)) : null;
 
-      const giveawaysWithDetails = await Promise.all(
-        giveaways.map(async (g) => ({
-          ...stripGiveawaySecrets(g),
-          entries: await storage.getGiveawayEntryCount(g.id),
-          requirements: withImplicitGiveawayRequirements(g, await storage.getGiveawayRequirements(g.id)),
-          hasEntered: enteredSet ? enteredSet.has(g.id) : false,
-          winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
-        }))
-      );
+      const giveawayIds = giveaways.map((g: any) => Number(g.id));
+      const countsMap = await storage.getGiveawayEntryCounts(giveawayIds);
+      const reqsMap = await storage.getGiveawayRequirementsForGiveaways(giveawayIds);
+
+      const giveawaysWithDetails = giveaways.map((g: any) => ({
+        ...stripGiveawaySecrets(g),
+        entries: Number(countsMap[Number(g.id)] || 0),
+        requirements: withImplicitGiveawayRequirements(g, reqsMap[Number(g.id)] || []),
+        hasEntered: enteredSet ? enteredSet.has(Number(g.id)) : false,
+        winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
+      }));
 
       res.json(giveawaysWithDetails);
     } catch (error) {

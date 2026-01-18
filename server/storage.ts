@@ -106,6 +106,8 @@ createAdminAuditLog(log: InsertAdminAuditLog): Promise<AdminAuditLog>;
   getGiveawayEntries(giveawayId: number): Promise<GiveawayEntry[]>;
   getGiveawayEntriesWithUsers(giveawayId: number): Promise<(GiveawayEntry & { user: User })[]>;
   getGiveawayEntryCount(giveawayId: number): Promise<number>;
+  getGiveawayEntryCounts(giveawayIds: number[]): Promise<Record<number, number>>;
+  getGiveawayRequirementsForGiveaways(giveawayIds: number[]): Promise<Record<number, GiveawayRequirement[]>>;
   hasUserEntered(giveawayId: number, userId: string): Promise<boolean>;
   getUserEnteredGiveawayIds(userId: string): Promise<number[]>;
   createGiveawayEntry(entry: InsertGiveawayEntry): Promise<GiveawayEntry>;
@@ -459,6 +461,36 @@ export class DatabaseStorage implements IStorage {
       .from(giveawayEntries)
       .where(eq(giveawayEntries.giveawayId, giveawayId));
     return Number(result[0]?.count || 0);
+  }
+
+  async getGiveawayEntryCounts(giveawayIds: number[]): Promise<Record<number, number>> {
+    const ids = Array.from(new Set((giveawayIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n))));
+    if (ids.length === 0) return {};
+    const rows = await db
+      .select({ giveawayId: giveawayEntries.giveawayId, count: sql<number>`count(*)` })
+      .from(giveawayEntries)
+      .where(inArray(giveawayEntries.giveawayId, ids))
+      .groupBy(giveawayEntries.giveawayId);
+
+    const outMap: Record<number, number> = {};
+    for (const r of rows) outMap[Number(r.giveawayId)] = Number((r as any).count || 0);
+    return outMap;
+  }
+
+  async getGiveawayRequirementsForGiveaways(giveawayIds: number[]): Promise<Record<number, GiveawayRequirement[]>> {
+    const ids = Array.from(new Set((giveawayIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n))));
+    if (ids.length === 0) return {};
+    const rows = await db
+      .select()
+      .from(giveawayRequirements)
+      .where(inArray(giveawayRequirements.giveawayId, ids));
+
+    const outMap: Record<number, GiveawayRequirement[]> = {};
+    for (const r of rows) {
+      const gid = Number((r as any).giveawayId);
+      (outMap[gid] ||= []).push(r);
+    }
+    return outMap;
   }
 
   async hasUserEntered(giveawayId: number, userId: string): Promise<boolean> {

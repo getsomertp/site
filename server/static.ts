@@ -14,11 +14,23 @@ export function serveStatic(app: Express) {
   // aggressively so deploys update instantly.
   app.use(
     express.static(distPath, {
+      // Default for non-hashed files (e.g., manifest).
       maxAge: "7d",
       etag: true,
       setHeaders(res, filePath) {
         if (filePath.endsWith("index.html")) {
+          // Never cache the HTML shell so deploys update instantly.
           res.setHeader("Cache-Control", "no-store");
+          return;
+        }
+
+        const base = path.basename(filePath);
+        const looksHashed = /\.[0-9a-f]{8,}\./i.test(base);
+        const isViteAsset = filePath.replace(/\\/g, "/").includes("/assets/");
+
+        if (looksHashed || isViteAsset) {
+          // Long-lived immutable caching for hashed assets.
+          res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
         }
       },
     }),

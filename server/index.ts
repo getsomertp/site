@@ -3,6 +3,7 @@ import session, { type Store as SessionStore } from "express-session";
 import MemoryStore from "memorystore";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
+import compression from "compression";
 import pg from "pg";
 import connectPgSimple from "connect-pg-simple";
 import { registerRoutes } from "./routes";
@@ -136,6 +137,12 @@ app.use(
     contentSecurityPolicy: false,
   }),
 );
+
+// Compression for faster page + API loads in production
+if ((process.env.NODE_ENV || "development") === "production") {
+  app.use(compression());
+}
+
 
 // General API rate limit (separate from the stricter admin login limiter)
 app.use(
