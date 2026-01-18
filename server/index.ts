@@ -14,6 +14,17 @@ import * as Sentry from "@sentry/node";
 
 const app = express();
 const httpServer = createServer(app);
+// Basic uptime telemetry (used by /api/uptime)
+const telemetry = {
+  startedAt: Date.now(),
+  requests: 0,
+  apiRequests: 0,
+  errors: 0,
+  lastErrorPath: null as string | null,
+  lastErrorAt: null as string | null,
+};
+(app as any).locals.telemetry = telemetry;
+
 
 
 // Optional Sentry (backend). If SENTRY_DSN is not set, this is a no-op.
@@ -25,6 +36,20 @@ if (sentryEnabled) {
     tracesSampleRate: Number(process.env.SENTRY_TRACES_SAMPLE_RATE || 0),
   });
 }
+// Capture unexpected crashes
+process.on("unhandledRejection", (reason: any) => {
+  console.error("⚠️ unhandledRejection", reason);
+  if (sentryEnabled) {
+    try { Sentry.captureException(reason); } catch {}
+  }
+});
+process.on("uncaughtException", (err: any) => {
+  console.error("💥 uncaughtException", err);
+  if (sentryEnabled) {
+    try { Sentry.captureException(err); } catch {}
+  }
+});
+
 
 
 // Behind reverse proxies (Railway, etc.) we must trust proxy for secure cookies.
@@ -43,6 +68,8 @@ declare module "express-session" {
   interface SessionData {
     isAdmin?: boolean;
     userId?: string;
+    staffRole?: string;
+    staffLabel?: string;
   }
 }
 
@@ -166,6 +193,18 @@ app.get("/sitemap.xml", (req, res) => {
 });
 
 export function log(message: string, source = "express") {
+  // In production, emit structured JSON logs (easy to query and debug).
+  if ((process.env.NODE_ENV || "development") === "production") {
+    console.log(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        source,
+        msg: message,
+      }),
+    );
+    return;
+  }
+
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
@@ -176,13 +215,25 @@ export function log(message: string, source = "express") {
   console.log(`${formattedTime} [${source}] ${message}`);
 }
 
+
 app.use((req, res, next) => {
+  telemetry.requests += 1;
   const start = Date.now();
   const path = req.path;
 
   res.on("finish", () => {
     const duration = Date.now() - start;
-    if (path.startsWith("/api")) {
+    const isApi = path.startsWith("/api");
+
+    if (isApi) telemetry.apiRequests += 1;
+
+    if (res.statusCode >= 500) {
+      telemetry.errors += 1;
+      telemetry.lastErrorPath = `${req.method} ${path}`;
+      telemetry.lastErrorAt = new Date().toISOString();
+    }
+
+    if (isApi) {
       log(`${req.method} ${path} ${res.statusCode} in ${duration}ms`);
     }
   });
@@ -248,15 +299,20 @@ app.use(
   // Start best-effort background refresh for partner leaderboards.
   startLeaderboardJobs();
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
 
-    if (sentryEnabled) {
-      Sentry.captureException(err);
-    }
-    const message = err.message || "Internal Server Error";
+    telemetry.errors += 1;
+    telemetry.lastErrorPath = `${req.method} ${req.path}`;
+    telemetry.lastErrorAt = new Date().toISOString();
 
+    if (sentryEnabled) {
+      try { Sentry.captureException(err); } catch {}
+    }
+
+    const message = err.message || "Internal Server Error";
     res.status(status).json({ error: message });
+
     // Never throw after responding; log instead.
     console.error(err);
   });
