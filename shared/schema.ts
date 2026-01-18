@@ -123,6 +123,12 @@ export const giveaways = pgTable("giveaways", {
   winnerPickedAt: timestamp("winner_picked_at"),
   winnerPickedBy: text("winner_picked_by"),
   winnerSeed: text("winner_seed"),
+  // Provably-fair commitment (seed is hidden until reveal)
+  pfSeed: text("pf_seed"),
+  pfSeedHash: text("pf_seed_hash"),
+  pfEntriesHash: text("pf_entries_hash"),
+  pfWinnerEntryId: integer("pf_winner_entry_id"),
+  pfWinnerIndex: integer("pf_winner_index"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow(),
 });

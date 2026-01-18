@@ -45,6 +45,17 @@ function normalizeBool(v: unknown, fallback: boolean): boolean {
   return fallback;
 }
 
+function sha256Hex(input: string): string {
+  return crypto.createHash("sha256").update(String(input)).digest("hex");
+}
+
+// Hide server-side provably-fair secret seed from all API responses.
+function stripGiveawaySecrets(g: any) {
+  if (!g) return g;
+  const { pfSeed, ...rest } = g;
+  return rest;
+}
+
 function envFirst(...keys: string[]): string | undefined {
   for (const k of keys) {
     const v = process.env[k];
@@ -1057,7 +1068,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
 
       const giveawaysWithDetails = await Promise.all(
         giveaways.map(async (g) => ({
-          ...g,
+          ...stripGiveawaySecrets(g),
           entries: await storage.getGiveawayEntryCount(g.id),
           requirements: withImplicitGiveawayRequirements(g, await storage.getGiveawayRequirements(g.id)),
           hasEntered: enteredSet ? enteredSet.has(g.id) : false,
@@ -1085,7 +1096,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
 
       const giveawaysWithDetails = await Promise.all(
         giveaways.map(async (g) => ({
-          ...g,
+          ...stripGiveawaySecrets(g),
           entries: await storage.getGiveawayEntryCount(g.id),
           requirements: withImplicitGiveawayRequirements(g, await storage.getGiveawayRequirements(g.id)),
           hasEntered: enteredSet ? enteredSet.has(g.id) : false,
@@ -1106,7 +1117,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
       const limit = Number((req.query as any)?.limit || 6);
       const rows = await storage.getRecentGiveawayWinners(limit);
       const payload = rows.map(({ giveaway, winner, casino }) => ({
-        ...giveaway,
+        ...stripGiveawaySecrets(giveaway),
         casino: casino ? { id: casino.id, name: casino.name, slug: casino.slug, logo: (casino as any).logo || null } : null,
         winner: toWinnerSummary(winner),
       }));
@@ -1131,9 +1142,62 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
       const hasEntered = userId ? await storage.hasUserEntered(id, userId) : false;
 
       const winnerUser = giveaway.winnerId ? await storage.getUser(String(giveaway.winnerId)) : undefined;
-      res.json({ ...giveaway, entries, requirements, hasEntered, winner: giveaway.winnerId ? toWinnerSummary(winnerUser) : null });
+      res.json({ ...stripGiveawaySecrets(giveaway), entries, requirements, hasEntered, winner: giveaway.winnerId ? toWinnerSummary(winnerUser) : null });
     } catch (error) {
       res.status(500).json({ error: getErrorMessage(error, "Failed to fetch giveaway") });
+    }
+  });
+
+
+  // Public: provably-fair proof payload (lets anyone reproduce the winner selection)
+  app.get("/api/giveaways/:id/proof", async (req: Request, res: Response) => {
+    try {
+      const giveawayId = parseInt(req.params.id);
+      if (!Number.isFinite(giveawayId)) return res.status(400).json({ error: "Invalid id" });
+
+      const giveaway = await storage.getGiveaway(giveawayId);
+      if (!giveaway) return res.status(404).json({ error: "Giveaway not found" });
+
+      const entries = await storage.getGiveawayEntries(giveawayId); // ordered by id asc
+      const entryIds = entries.map((e: any) => Number(e.id));
+      const entryIdsCsv = entryIds.map((id) => String(id)).join(",");
+      const entriesHash = sha256Hex(entryIdsCsv);
+
+      const seedCommitHash = (giveaway as any).pfSeedHash || null;
+      const revealedSeed = (giveaway as any).winnerSeed || null;
+
+      let computed: any = null;
+      let ok = false;
+      if (revealedSeed && entryIds.length > 0) {
+        const pickHash = sha256Hex(`${revealedSeed}|${giveawayId}|${entryIdsCsv}`);
+        const winnerIndex = Number(BigInt("0x" + pickHash) % BigInt(entryIds.length));
+        const winnerEntry = entries[winnerIndex];
+        computed = { pickHash, winnerIndex, winnerEntryId: winnerEntry?.id || null, winnerUserId: winnerEntry?.userId || null };
+        ok = Boolean((giveaway as any).winnerId) && String((giveaway as any).winnerId) === String(computed.winnerUserId);
+      }
+
+      const winnerUser = (giveaway as any).winnerId ? await storage.getUser(String((giveaway as any).winnerId)) : null;
+      return res.json({
+        giveawayId,
+        title: giveaway.title,
+        endsAt: giveaway.endsAt,
+        entryCount: entryIds.length,
+        entryIds,
+        entriesHash,
+        seedCommitHash,
+        revealedSeed,
+        stored: {
+          pfEntriesHash: (giveaway as any).pfEntriesHash || null,
+          pfWinnerIndex: (giveaway as any).pfWinnerIndex ?? null,
+          pfWinnerEntryId: (giveaway as any).pfWinnerEntryId ?? null,
+          winnerId: (giveaway as any).winnerId || null,
+        },
+        computed,
+        ok,
+        winner: winnerUser ? toWinnerSummary(winnerUser) : null,
+      });
+    } catch (error) {
+      return res.status(500).json({ error: getErrorMessage(error, "Failed to build proof") });
     }
   });
 
@@ -1156,7 +1220,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
 
       const out = await Promise.all(
         filtered.map(async (g: any) => ({
-          ...g,
+          ...stripGiveawaySecrets(g),
           entries: await storage.getGiveawayEntryCount(g.id),
           requirements: withImplicitGiveawayRequirements(g, await storage.getGiveawayRequirements(g.id)),
           winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
@@ -1209,7 +1273,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
       const now = new Date();
       const updated = await storage.updateGiveaway(giveawayId, { isActive: false, endsAt: now } as any);
       await auditAction(req, "giveaway.end", "giveaway", giveawayId, { title: giveaway.title });
-      return res.json(updated || { ...giveaway, isActive: false, endsAt: now });
+      return res.json(stripGiveawaySecrets(updated || { ...giveaway, isActive: false, endsAt: now }));
     } catch (error) {
       return res.status(500).json({ error: getErrorMessage(error, "Failed to end giveaway") });
     }
@@ -1242,22 +1306,32 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
       if (giveaway.winnerId && !force) {
         const winnerUser = await storage.getUser(String(giveaway.winnerId));
         return res.json({
-          giveaway: { ...giveaway, winner: giveaway.winnerId ? toWinnerSummary(winnerUser) : null },
+          giveaway: { ...stripGiveawaySecrets(giveaway), winner: giveaway.winnerId ? toWinnerSummary(winnerUser) : null },
           winnerId: giveaway.winnerId,
           winner: giveaway.winnerId ? toWinnerSummary(winnerUser) : null,
           alreadyPicked: true,
         });
       }
 
-      const entries = await storage.getGiveawayEntries(giveawayId);
+      const entries = await storage.getGiveawayEntries(giveawayId); // ordered by id asc (storage enforces)
       if (!entries.length) {
         return res.status(400).json({ error: "No entries to pick from" });
       }
 
-      // Seed is stored on the giveaway for auditability.
-      const seed = force || !(giveaway as any).winnerSeed ? crypto.randomUUID() : String((giveaway as any).winnerSeed);
-      const entryIds = entries.map((e: any) => String(e.id)).sort().join(",");
-      const hashHex = crypto.createHash("sha256").update(`${seed}|${giveawayId}|${entryIds}`).digest("hex");
+      // Use a committed secret seed (pfSeed). For new giveaways we commit at creation.
+      // For legacy giveaways (missing commit), we commit on first pick; this is still auditable but not as strong.
+      const priorPfSeed = String((giveaway as any).pfSeed || "");
+      const priorPfSeedHash = String((giveaway as any).pfSeedHash || "");
+      const generatedNewSeed = force || !priorPfSeed || !priorPfSeedHash;
+      const pfSeed = generatedNewSeed ? crypto.randomBytes(32).toString("hex") : priorPfSeed;
+      const pfSeedHash = generatedNewSeed ? sha256Hex(pfSeed) : priorPfSeedHash;
+
+      // Deterministic snapshot of entry IDs (ordered)
+      const entryIdsCsv = entries.map((e: any) => String(e.id)).join(",");
+      const entriesHash = sha256Hex(entryIdsCsv);
+
+      // Deterministic winner index derived from (seed | giveawayId | entryIdsCsv)
+      const hashHex = sha256Hex(`${pfSeed}|${giveawayId}|${entryIdsCsv}`);
       const idx = Number(BigInt("0x" + hashHex) % BigInt(entries.length));
       const winnerEntry = entries[idx];
       const winnerId = winnerEntry.userId;
@@ -1268,7 +1342,16 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
         isActive: false,
         winnerPickedAt: now,
         winnerPickedBy: actor,
-        winnerSeed: seed,
+
+        // reveal seed after winner is picked
+        winnerSeed: pfSeed,
+
+        // provably-fair metadata
+        pfSeed,
+        pfSeedHash,
+        pfEntriesHash: entriesHash,
+        pfWinnerEntryId: winnerEntry.id,
+        pfWinnerIndex: idx,
       } as any);
       const winnerUser = await storage.getUser(String(winnerId));
 
@@ -1277,15 +1360,23 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
         winnerId,
         entries: entries.length,
         forced: force,
-        seedHash: crypto.createHash("sha256").update(seed).digest("hex"),
+        seedCommitHash: pfSeedHash,
+        entriesHash,
+        winnerIndex: idx,
+        winnerEntryId: winnerEntry.id,
+        pickHash: hashHex,
+        committedNow: generatedNewSeed && (!priorPfSeed || !priorPfSeedHash) && !force,
       });
 
       return res.json({
-        giveaway: updated ? { ...updated, winner: toWinnerSummary(winnerUser) } : { ...giveaway, winnerId, winner: toWinnerSummary(winnerUser) },
+        giveaway: updated
+          ? { ...stripGiveawaySecrets(updated), winner: toWinnerSummary(winnerUser) }
+          : { ...stripGiveawaySecrets(giveaway), winnerId, winner: toWinnerSummary(winnerUser) },
         winnerId,
         winner: toWinnerSummary(winnerUser),
         alreadyPicked: false,
       });
+
     } catch (error) {
       res.status(500).json({ error: getErrorMessage(error, "Failed to pick winner") });
     }
@@ -1307,7 +1398,11 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
         giveawayData.maxEntries = Number.isFinite(n) ? n : null;
       }
 
-      const data = insertGiveawaySchema.parse(giveawayData);
+      // Provably-fair seed commitment: we generate a secret seed now and only reveal it after the giveaway ends.
+      // Users can see pfSeedHash immediately (commitment), and later verify once winnerSeed is revealed.
+      const pfSeed = crypto.randomBytes(32).toString("hex");
+      const pfSeedHash = sha256Hex(pfSeed);
+      const data = insertGiveawaySchema.parse({ ...giveawayData, pfSeed, pfSeedHash });
       const giveaway = await storage.createGiveaway(data);
       auditAction(req, "giveaway.create", "giveaway", giveaway.id, { title: giveaway.title, casinoId: giveaway.casinoId });
       
@@ -1316,7 +1411,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
       }
       
       const reqs = withImplicitGiveawayRequirements(giveaway, await storage.getGiveawayRequirements(giveaway.id));
-      res.status(201).json({ ...giveaway, requirements: reqs });
+      res.status(201).json({ ...stripGiveawaySecrets(giveaway), requirements: reqs });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
@@ -1341,6 +1436,15 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
         giveawayData.maxEntries = Number.isFinite(n) ? n : null;
       }
 
+
+      // Do not allow editing any provably-fair or winner-determinant fields from the client.
+      delete giveawayData.pfSeed;
+      delete giveawayData.pfSeedHash;
+      delete giveawayData.pfEntriesHash;
+      delete giveawayData.pfWinnerEntryId;
+      delete giveawayData.pfWinnerIndex;
+      delete giveawayData.winnerSeed;
+
       const data = insertGiveawaySchema.partial().parse(giveawayData);
       const giveaway = await storage.updateGiveaway(id, data);
       if (giveaway) { auditAction(req, "giveaway.update", "giveaway", id, { title: giveaway.title, casinoId: giveaway.casinoId }); }
@@ -1353,7 +1457,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
       }
       
       const reqs = withImplicitGiveawayRequirements(giveaway, await storage.getGiveawayRequirements(id));
-      res.json({ ...giveaway, requirements: reqs });
+      res.json({ ...stripGiveawaySecrets(giveaway), requirements: reqs });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
