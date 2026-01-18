@@ -583,6 +583,52 @@ app.post("/api/admin/uploads/casino-logo", adminAuth, upload.single("logo"), asy
   }
 });
 
+// Admin: upload site logo (S3/R2 if configured, else local)
+app.post("/api/admin/uploads/site-logo", adminAuth, upload.single("logo"), async (req: Request, res: Response) => {
+  try {
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (!file) return res.status(400).json({ error: "No file uploaded" });
+
+    const ext = (file.originalname.split(".").pop() || "png")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+    const key = `site/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
+    auditAction(req, "site.logo.upload", "file", key, { mimetype: file.mimetype, size: file.size });
+
+    const bucket = getObjectStorageConfig().bucket;
+    const client = s3Client();
+
+    if (client && bucket) {
+      await client.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Body: file.buffer,
+          ContentType: file.mimetype || "application/octet-stream",
+          CacheControl: "public, max-age=31536000, immutable",
+        }),
+      );
+
+      const publicUrl = getPublicUrl(key);
+      if (!publicUrl) {
+        return res.status(500).json({
+          error:
+            "Uploaded, but no public URL can be formed. Set S3_PUBLIC_BASE_URL or enable S3_USE_PROXY.",
+        });
+      }
+      return res.json({ url: publicUrl, key });
+    }
+
+    // Fallback: local filesystem
+    const localName = key.replace(/\//g, "_");
+    const outPath = path.join(uploadsDir, localName);
+    fs.writeFileSync(outPath, file.buffer);
+    return res.json({ url: `/uploads/${localName}` });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || "Failed to upload logo" });
+  }
+});
+
 
 
 app.get("/api/auth/me", async (req: Request, res: Response) => {
@@ -904,17 +950,35 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
     }
   });
 
-  // Admin: list + upsert settings
-  app.get("/api/admin/site/settings", adminAuth, async (_req: Request, res: Response) => {
+  // Admin: list settings as a simple key/value object (matches the client UI expectations)
+  const siteSettingsAsRecord = async (_req: Request, res: Response) => {
     try {
       const rows = await storage.getSiteSettings();
-      res.json(rows);
+      const out: Record<string, string> = {};
+      for (const r of rows) out[r.key] = r.value;
+      res.json(out);
     } catch (error) {
       res.status(500).json({ error: getErrorMessage(error, "Failed to fetch site settings") });
     }
-  });
+  };
+
+  app.get("/api/admin/site/settings", adminAuth, siteSettingsAsRecord);
+  // Back-compat alias (older UI used the hyphenated route)
+  app.get("/api/admin/site-settings", adminAuth, siteSettingsAsRecord);
 
   app.post("/api/admin/site/settings", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const data = insertSiteSettingSchema.parse(req.body);
+      const row = await storage.upsertSiteSetting(data);
+      res.status(201).json(row);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to upsert site setting") });
+    }
+  });
+
+  // Back-compat alias for POST
+  app.post("/api/admin/site-settings", adminAuth, async (req: Request, res: Response) => {
     try {
       const data = insertSiteSettingSchema.parse(req.body);
       const row = await storage.upsertSiteSetting(data);
