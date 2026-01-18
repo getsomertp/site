@@ -20,6 +20,33 @@ function setNoCacheHtml(res: express.Response) {
   res.setHeader("Expires", "0");
 }
 
+function setNoStore(res: express.Response) {
+  res.setHeader("Cache-Control", "no-store");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+}
+
+function missingAssetRecoveryModule(req: express.Request) {
+  // If a cached HTML shell references an old hashed asset that no longer exists,
+  // returning index.html (text/html) causes the browser to refuse to execute the module.
+  // Returning 404 can also leave the user with a blank screen.
+  //
+  // Instead, return a tiny JS module that forces a full reload with a cache-busting param.
+  // This recovers automatically for users behind aggressive edge caching/CDNs.
+  const cb = Date.now();
+  const to = `/?__cb=${cb}`;
+  const pathInfo = String(req.path || "");
+  return `// Missing asset: ${pathInfo}\n` +
+    `try {\n` +
+    `  const u = new URL(window.location.href);\n` +
+    `  u.searchParams.set('__cb', String(${cb}));\n` +
+    `  window.location.replace(u.toString());\n` +
+    `} catch {\n` +
+    `  window.location.replace('${to}');\n` +
+    `}\n` +
+    `export {};\n`;
+}
+
 export function serveStatic(app: Express) {
   const distPath = path.resolve(__dirname, "public");
   if (!fs.existsSync(distPath)) {
@@ -59,6 +86,16 @@ export function serveStatic(app: Express) {
   // "module script MIME type text/html" errors + a "blank" app).
   app.use("*", (req, res) => {
     if (isAssetLikePath(req.path)) {
+      // If it's a missing JS module under /assets, return a recovery module instead of 404.
+      // This fixes the most common "blank screen" issue after deploys when HTML is cached.
+      if (req.path.startsWith("/assets/") && /\.(m?js)$/i.test(req.path)) {
+        setNoStore(res);
+        res.setHeader("Content-Type", "application/javascript; charset=utf-8");
+        res.status(200).send(missingAssetRecoveryModule(req));
+        return;
+      }
+
+      // For everything else asset-like, do not fall back to HTML.
       res.status(404).end();
       return;
     }
