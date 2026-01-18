@@ -281,7 +281,10 @@ export default function Admin() {
   });
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [adminInfo, setAdminInfo] = useState<any | null>(null);
+  const isStaff = adminInfo?.isStaff === true;
+  const isAdminLike = adminInfo?.isAdmin === true;
+  const perms = adminInfo?.permissions || {};
   const [casinoDialogOpen, setCasinoDialogOpen] = useState(false);
   const [giveawayDialogOpen, setGiveawayDialogOpen] = useState(false);
   const [editingCasino, setEditingCasino] = useState<Casino | null>(null);
@@ -328,29 +331,29 @@ const [auditSearch, setAuditSearch] = useState("");
   useEffect(() => {
     fetch("/api/admin/me", { credentials: "include" })
       .then(res => res.json())
-      .then(data => setIsAuthenticated(data.isAdmin))
-      .catch(() => setIsAuthenticated(false));
+      .then(data => setAdminInfo(data))
+      .catch(() => setAdminInfo({ isStaff: false, isAdmin: false, role: null, permissions: {} }));
   }, []);
 
   // Fetch all casinos including inactive (admin endpoint)
   const { data: casinos = [], isLoading: loadingCasinos } = useQuery<Casino[]>({
     queryKey: ["/api/admin/casinos"],
     queryFn: () => adminFetch("/api/admin/casinos"),
-    enabled: isAuthenticated === true,
+    enabled: isAdminLike === true,
   });
 
   // Site settings
   const { data: siteSettings = {} } = useQuery<Record<string, string>>({
     queryKey: ["/api/admin/site/settings"],
     queryFn: () => adminFetch("/api/admin/site-settings"),
-    enabled: isAuthenticated === true,
+    enabled: isAdminLike === true,
   });
 
 // Admin audit log
 const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAuditLog[]>({
   queryKey: ["/api/admin/audit", auditSearch],
   queryFn: () => adminFetch(`/api/admin/audit?q=${encodeURIComponent(auditSearch)}`),
-  enabled: isAuthenticated === true,
+  enabled: isAdminLike === true,
 });
 
 
@@ -363,20 +366,20 @@ const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAudi
   const { data: leaderboards = [], isLoading: loadingLeaderboards } = useQuery<any[]>({
     queryKey: ["/api/admin/leaderboards"],
     queryFn: () => adminFetch("/api/admin/leaderboards"),
-    enabled: isAuthenticated === true,
+    enabled: isAdminLike === true,
   });
 
   // Fetch giveaways  
   const { data: giveaways = [], isLoading: loadingGiveaways } = useQuery<GiveawayAdmin[]>({
     queryKey: ["/api/admin/giveaways"],
     queryFn: () => adminFetch("/api/admin/giveaways"),
-    enabled: isAuthenticated === true,
+    enabled: isStaff === true,
   });
 
   const { data: giveawayEntries = [], isLoading: loadingGiveawayEntries } = useQuery<GiveawayEntryAdmin[]>({
     queryKey: [selectedGiveawayForEntries ? `/api/admin/giveaways/${selectedGiveawayForEntries.id}/entries` : "/api/admin/giveaways/0/entries"],
     queryFn: () => adminFetch(`/api/admin/giveaways/${selectedGiveawayForEntries!.id}/entries`),
-    enabled: isAuthenticated === true && entriesDialogOpen && !!selectedGiveawayForEntries?.id,
+    enabled: isStaff === true && entriesDialogOpen && !!selectedGiveawayForEntries?.id,
   });
 
 
@@ -657,10 +660,10 @@ const deleteLeaderboard = useMutation({
   
   const handleLogout = async () => {
     await fetch("/api/admin/logout", { method: "POST", credentials: "include" });
-    setIsAuthenticated(false);
+    setAdminInfo({ isStaff: false, isAdmin: false, role: null, permissions: {} });
   };
   
-  if (isAuthenticated === null) {
+  if (adminInfo === null) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-white">Loading...</div>
@@ -668,8 +671,15 @@ const deleteLeaderboard = useMutation({
     );
   }
   
-  if (!isAuthenticated) {
-    return <AdminLogin onLogin={() => setIsAuthenticated(true)} />;
+  if (!isStaff) {
+    return <AdminLogin onLogin={async () => {
+      try {
+        const data = await fetch("/api/admin/me", { credentials: "include" }).then(r => r.json());
+        setAdminInfo(data);
+      } catch {
+        setAdminInfo({ isStaff: false, isAdmin: false, role: null, permissions: {} });
+      }
+    }} />;
   }
 
   const openEditCasino = (casino: Casino) => {
@@ -785,11 +795,13 @@ const deleteLeaderboard = useMutation({
             </p>
           </motion.div>
 
-          <Tabs defaultValue="casinos" className="w-full">
+          <Tabs defaultValue={isAdminLike ? "casinos" : "giveaways"} className="w-full">
             <TabsList className="grid w-full grid-cols-4 md:grid-cols-8 mb-8 bg-card/50">
+              {isAdminLike && (
               <TabsTrigger value="casinos" className="font-display" data-testid="admin-tab-casinos">
                 <Trophy className="w-4 h-4 mr-2" /> Casinos
               </TabsTrigger>
+              )}
               <TabsTrigger value="giveaways" className="font-display" data-testid="admin-tab-giveaways">
                 <Gift className="w-4 h-4 mr-2" /> Giveaways
               </TabsTrigger>
@@ -799,19 +811,26 @@ const deleteLeaderboard = useMutation({
               <TabsTrigger value="verifications" className="font-display" data-testid="admin-tab-verifications">
                 <BadgeCheck className="w-4 h-4 mr-2" /> Verifications
               </TabsTrigger>
+              {isAdminLike && (
               <TabsTrigger value="stream-events" className="font-display" data-testid="admin-tab-stream-events">
                 <Tv className="w-4 h-4 mr-2" /> Stream Events
               </TabsTrigger>
+              )}
+              {isAdminLike && (
               <TabsTrigger value="leaderboards" className="font-display" data-testid="admin-tab-leaderboards">
                 <Trophy className="w-4 h-4 mr-2" /> Leaderboards
               </TabsTrigger>
+              )}
+              {isAdminLike && (
               <TabsTrigger value="site" className="font-display" data-testid="admin-tab-site">
                 <Settings className="w-4 h-4 mr-2" /> Site
               </TabsTrigger>
-            
-<TabsTrigger value="audit" className="font-display" data-testid="admin-tab-audit">
-  <ScrollText className="w-4 h-4 mr-2" /> Audit
-</TabsTrigger>
+              )}
+              {isAdminLike && (
+                <TabsTrigger value="audit" className="font-display" data-testid="admin-tab-audit">
+                  <ScrollText className="w-4 h-4 mr-2" /> Audit
+                </TabsTrigger>
+              )}
 </TabsList>
 
             <TabsContent value="casinos">
@@ -1169,7 +1188,33 @@ const deleteLeaderboard = useMutation({
             <TabsContent value="giveaways">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="font-display text-2xl font-bold text-white">Manage Giveaways</h2>
-                <Dialog open={giveawayDialogOpen} onOpenChange={(open) => {
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    className="font-display"
+                    onClick={() => {
+                      const rows = giveaways
+                        .filter((g) => !!g.winnerId)
+                        .map((g) => ({
+                          giveawayId: g.id,
+                          title: g.title,
+                          prize: g.prize,
+                          casinoId: g.casinoId,
+                          endsAt: g.endsAt,
+                          winnerId: g.winnerId,
+                          winnerPickedAt: (g as any).winnerPickedAt || "",
+                          winnerPickedBy: (g as any).winnerPickedBy || "",
+                          winnerSeed: (g as any).winnerSeed || "",
+                        }));
+                      downloadCsv(`giveaway_winners_${new Date().toISOString().slice(0, 10)}.csv`, rows);
+                    }}
+                    data-testid="button-export-winners"
+                  >
+                    Export Winners CSV
+                  </Button>
+
+                  {isAdminLike && (
+                    <Dialog open={giveawayDialogOpen} onOpenChange={(open) => {
                   setGiveawayDialogOpen(open);
                   if (!open) {
                     setEditingGiveaway(null);
@@ -1379,6 +1424,8 @@ const deleteLeaderboard = useMutation({
                     </div>
                   </DialogContent>
                 </Dialog>
+                  )}
+                </div>
               </div>
 
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
@@ -1690,7 +1737,7 @@ const deleteLeaderboard = useMutation({
               </Dialog>
             </TabsContent>
 
-            <PlayersTab casinos={casinos} />
+            <PlayersTab casinos={casinos} canManagePayments={isAdminLike} />
 
             
 <TabsContent value="leaderboards">
@@ -2068,10 +2115,10 @@ function VerificationsTab() {
   });
 
   const verifyCasinoAccount = useMutation({
-    mutationFn: async (id: number) => {
-      return adminFetch(`/api/casino-accounts/${id}`, {
+    mutationFn: async (payload: { id: number; verified: boolean }) => {
+      return adminFetch(`/api/casino-accounts/${payload.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ verified: true }),
+        body: JSON.stringify({ verified: payload.verified }),
       });
     },
     onSuccess: () => {
@@ -2085,10 +2132,10 @@ function VerificationsTab() {
   });
 
   const verifyWallet = useMutation({
-    mutationFn: async (id: number) => {
-      return adminFetch(`/api/wallets/${id}`, {
+    mutationFn: async (payload: { id: number; verified: boolean }) => {
+      return adminFetch(`/api/wallets/${payload.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ verified: true }),
+        body: JSON.stringify({ verified: payload.verified }),
       });
     },
     onSuccess: () => {
@@ -2262,7 +2309,7 @@ function VerificationsTab() {
   );
 }
 
-function PlayersTab({ casinos }: { casinos: Casino[] }) {
+function PlayersTab({ casinos, canManagePayments }: { casinos: Casino[]; canManagePayments: boolean }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
@@ -2304,10 +2351,10 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
   });
 
   const verifyCasinoAccount = useMutation({
-    mutationFn: async (id: number) => {
-      return adminFetch(`/api/casino-accounts/${id}`, {
+    mutationFn: async (payload: { id: number; verified: boolean }) => {
+      return adminFetch(`/api/casino-accounts/${payload.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ verified: true }),
+        body: JSON.stringify({ verified: payload.verified }),
       });
     },
     onSuccess: () => {
@@ -2320,10 +2367,10 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
   });
 
   const verifyWallet = useMutation({
-    mutationFn: async (id: number) => {
-      return adminFetch(`/api/wallets/${id}`, {
+    mutationFn: async (payload: { id: number; verified: boolean }) => {
+      return adminFetch(`/api/wallets/${payload.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ verified: true }),
+        body: JSON.stringify({ verified: payload.verified }),
       });
     },
     onSuccess: () => {
@@ -2434,12 +2481,14 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                       <p className="text-sm text-muted-foreground">Kick: {userDetails.user.kickUsername}</p>
                     )}
                   </div>
+{canManagePayments && (
                   <div className="ml-auto text-right">
                     <div className="text-sm text-muted-foreground">Total Paid</div>
                     <div className="font-display text-2xl font-bold text-neon-gold">
                       ${parseFloat(userDetails.totalPayments || "0").toFixed(2)}
                     </div>
                   </div>
+                )}
                 </div>
 
                 <div>
@@ -2467,11 +2516,22 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => verifyCasinoAccount.mutate(account.id)}
+                                  onClick={() => verifyCasinoAccount.mutate({ id: account.id, verified: true })}
                                   disabled={verifyCasinoAccount.isPending}
                                   data-testid={`button-verify-casino-account-${account.id}`}
                                 >
                                   Verify
+                                </Button>
+                              )}
+                              {account.verified && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => verifyCasinoAccount.mutate({ id: account.id, verified: false })}
+                                  disabled={verifyCasinoAccount.isPending}
+                                  data-testid={`button-unverify-casino-account-${account.id}`}
+                                >
+                                  Unverify
                                 </Button>
                               )}
                               <Badge className={account.verified ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400"}>
@@ -2517,11 +2577,22 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => verifyWallet.mutate(wallet.id)}
+                                  onClick={() => verifyWallet.mutate({ id: wallet.id, verified: true })}
                                   disabled={verifyWallet.isPending}
                                   data-testid={`button-verify-wallet-${wallet.id}`}
                                 >
                                   Verify
+                                </Button>
+                              )}
+                              {wallet.verified && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => verifyWallet.mutate({ id: wallet.id, verified: false })}
+                                  disabled={verifyWallet.isPending}
+                                  data-testid={`button-unverify-wallet-${wallet.id}`}
+                                >
+                                  Unverify
                                 </Button>
                               )}
                               <Badge className={wallet.verified ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400"}>
@@ -2540,6 +2611,7 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                     <h4 className="font-display text-lg font-bold text-white flex items-center gap-2">
                       <DollarSign className="w-5 h-5 text-neon-gold" /> Payment History
                     </h4>
+                    {canManagePayments && (
                     <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
                       <DialogTrigger asChild>
                         <Button size="sm" className="font-display bg-neon-gold text-black hover:bg-neon-gold/80" data-testid="button-add-payment">
@@ -2601,6 +2673,7 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                         </div>
                       </DialogContent>
                     </Dialog>
+                    )}
                   </div>
                   {userDetails.payments.length === 0 ? (
                     <p className="text-muted-foreground text-sm">No payments recorded</p>
