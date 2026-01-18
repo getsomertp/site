@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Settings, Plus, Trash2, Edit, Save, X, ExternalLink, Trophy, Gift, Lock, Users, Search, DollarSign, Wallet, Image, Tv, LogIn, LogOut, Download, ScrollText, BadgeCheck, Loader2 } from "lucide-react";
+import { Settings, Plus, Trash2, Edit, Save, X, ExternalLink, Trophy, Gift, Lock, Users, Search, DollarSign, Wallet, Image, Tv, LogIn, LogOut, Download, ScrollText, BadgeCheck, Loader2, RefreshCcw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,8 @@ import { useToast } from "@/hooks/use-toast";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Slider } from "@/components/ui/slider";
 import { downloadCsv } from "@/lib/csv";
+import { clearClientCacheAndReload } from "@/lib/clearClientCache";
+import { clearClientCacheAndReload } from "@/lib/clearClientCache";
 import type { Casino, Giveaway, GiveawayRequirement, User, UserPayment, UserCasinoAccount, UserWallet } from "@shared/schema";
 
 // IMPORTANT: Don't import the Drizzle schema module (shared/schema.ts) into the browser bundle.
@@ -2222,6 +2224,18 @@ const deleteLeaderboard = useMutation({
                     </div>
                   </div>
                 </div>
+
+                <div className="mt-8 pt-6 border-t border-white/10">
+                  <h3 className="font-display text-xl text-white mb-2">Troubleshooting</h3>
+                  <p className="text-muted-foreground mb-4">
+                    If the site ever looks blank after a deploy, this will clear browser cache storage and reload the app.
+                  </p>
+                  <Button type="button" variant="outline" className="gap-2" onClick={() => void clearClientCacheAndReload()}>
+                    <RefreshCcw className="w-4 h-4" />
+                    Clear client cache & reload
+                  </Button>
+                </div>
+
                 <div className="flex justify-end mt-6">
                   <Button className="font-display bg-neon-cyan text-black" onClick={() => saveSiteSettings.mutate()} disabled={saveSiteSettings.isPending}>
                     Save Settings
