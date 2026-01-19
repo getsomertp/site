@@ -18,6 +18,7 @@ import { StreamEvents } from "@/components/StreamEvents";
 import { useToast } from "@/hooks/use-toast";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Slider } from "@/components/ui/slider";
+import { Switch } from "@/components/ui/switch";
 import { downloadCsv } from "@/lib/csv";
 import { clearClientCacheAndReload } from "@/lib/clearClientCache";
 import type { Casino, Giveaway, GiveawayRequirement, User, UserPayment, UserCasinoAccount, UserWallet } from "@shared/schema";
@@ -37,6 +38,10 @@ const HOME_BLOCKS = [
 ] as const;
 
 const DEFAULT_HOME_BLOCK_ORDER: string[] = HOME_BLOCKS.map((b) => b.id);
+
+type HomeBlockConfig = { id: string; hidden?: boolean };
+
+const DEFAULT_HOME_BLOCK_CONFIG: HomeBlockConfig[] = DEFAULT_HOME_BLOCK_ORDER.map((id) => ({ id, hidden: false }));
 
 type RequirementForm = {
   type: string;
@@ -374,27 +379,29 @@ const [auditSearch, setAuditSearch] = useState("");
   const [themeAccent, setThemeAccent] = useState("#b026ff");
   const [uploadingThemeBg, setUploadingThemeBg] = useState(false);
 
-  // Home page layout (reorderable blocks)
-  const [homeBlocksOrder, setHomeBlocksOrder] = useState<string[]>(DEFAULT_HOME_BLOCK_ORDER);
+  // Home page layout (reorderable + hideable blocks)
+  const [homeBlocksConfig, setHomeBlocksConfig] = useState<HomeBlockConfig[]>(DEFAULT_HOME_BLOCK_CONFIG);
   const [homeBlocksDragIndex, setHomeBlocksDragIndex] = useState<number | null>(null);
 
-  const normalizeHomeBlocksOrder = (ids: string[]): string[] => {
+  const normalizeHomeBlocksConfig = (list: HomeBlockConfig[]): HomeBlockConfig[] => {
     const allowed = new Set(HOME_BLOCKS.map((b) => b.id));
-    const out: string[] = [];
-    for (const raw of ids || []) {
-      const id = String(raw || '').trim();
-      if (!id || !allowed.has(id)) continue;
-      if (!out.includes(id)) out.push(id);
+    const seen = new Set<string>();
+    const out: HomeBlockConfig[] = [];
+    for (const it of list || []) {
+      const id = String((it as any)?.id || "").trim();
+      if (!id || !allowed.has(id) || seen.has(id)) continue;
+      out.push({ id, hidden: Boolean((it as any)?.hidden) });
+      seen.add(id);
     }
     for (const id of DEFAULT_HOME_BLOCK_ORDER) {
-      if (!out.includes(id)) out.push(id);
+      if (!seen.has(id)) out.push({ id, hidden: false });
     }
     return out;
   };
 
   const moveHomeBlock = (from: number, to: number) => {
-    setHomeBlocksOrder((prev) => {
-      const arr = [...normalizeHomeBlocksOrder(prev)];
+    setHomeBlocksConfig((prev) => {
+      const arr = [...normalizeHomeBlocksConfig(prev)];
       if (from < 0 || from >= arr.length) return arr;
       if (to < 0 || to >= arr.length) return arr;
       const [item] = arr.splice(from, 1);
@@ -403,7 +410,16 @@ const [auditSearch, setAuditSearch] = useState("");
     });
   };
 
-  const resetHomeBlocksOrder = () => setHomeBlocksOrder(DEFAULT_HOME_BLOCK_ORDER);
+  const toggleHomeBlockHidden = (idx: number) => {
+    setHomeBlocksConfig((prev) => {
+      const arr = [...normalizeHomeBlocksConfig(prev)];
+      if (idx < 0 || idx >= arr.length) return arr;
+      arr[idx] = { ...arr[idx], hidden: !arr[idx].hidden };
+      return arr;
+    });
+  };
+
+  const resetHomeBlocksOrder = () => setHomeBlocksConfig(DEFAULT_HOME_BLOCK_CONFIG);
 
 
   // Home page content (mini CMS)
@@ -666,23 +682,30 @@ const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAudi
     setIf("home.winnersEmptyText", setHomeWinnersEmptyText);
     setIf("home.winnersViewAllLabel", setHomeWinnersViewAllLabel);
 
-    // Homepage layout (block order)
+    // Homepage layout (block order + hidden flags)
     const orderRaw = g("home.blocksOrder");
     if (orderRaw !== undefined) {
       const raw = String(orderRaw || "");
-      let ids: string[] = [];
+      let cfg: HomeBlockConfig[] = [];
       try {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) {
-          ids = parsed.filter((x) => typeof x === 'string').map((x) => String(x).trim()).filter(Boolean);
+          cfg = parsed
+            .map((x) => {
+              if (typeof x === "string") return { id: x, hidden: false } as HomeBlockConfig;
+              if (x && typeof x === "object") return { id: (x as any).id, hidden: Boolean((x as any).hidden) } as HomeBlockConfig;
+              return null;
+            })
+            .filter(Boolean) as any;
         }
       } catch {
         // ignore
       }
-      if (!ids.length) {
-        ids = raw.split(',').map((s) => s.trim()).filter(Boolean);
+      if (!cfg.length) {
+        const ids = raw.split(",").map((s) => s.trim()).filter(Boolean);
+        cfg = ids.map((id) => ({ id, hidden: false }));
       }
-      setHomeBlocksOrder(ids.length ? normalizeHomeBlocksOrder(ids) : DEFAULT_HOME_BLOCK_ORDER);
+      setHomeBlocksConfig(cfg.length ? normalizeHomeBlocksConfig(cfg) : DEFAULT_HOME_BLOCK_CONFIG);
     }
   }, [siteSettings]);
 
@@ -865,7 +888,7 @@ const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAudi
         ["home.winnersTitle", (homeWinnersTitle || "").trim()],
         ["home.winnersEmptyText", (homeWinnersEmptyText || "").trim()],
         ["home.winnersViewAllLabel", (homeWinnersViewAllLabel || "").trim()],
-        ["home.blocksOrder", JSON.stringify(normalizeHomeBlocksOrder(homeBlocksOrder))],
+        ["home.blocksOrder", JSON.stringify(normalizeHomeBlocksConfig(homeBlocksConfig))],
       ];
 
       await Promise.all(
@@ -2741,7 +2764,8 @@ const deleteLeaderboard = useMutation({
                     </div>
 
                     <div className="mt-4 space-y-2">
-                      {homeBlocksOrder.map((id, idx) => {
+                      {homeBlocksConfig.map((cfg, idx) => {
+                        const id = cfg.id;
                         const label = HOME_BLOCKS.find((b) => b.id === id)?.label || id;
                         const isDragging = homeBlocksDragIndex === idx;
                         return (
@@ -2764,8 +2788,13 @@ const deleteLeaderboard = useMutation({
                             <div className="flex items-center gap-2 text-white">
                               <GripVertical className="w-4 h-4 text-white/50" />
                               <span className="font-medium">{label}</span>
+                              {cfg.hidden ? <span className="text-xs text-white/50 ml-2">(hidden)</span> : null}
                             </div>
                             <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-2 mr-2">
+                                <span className="text-xs text-white/60">Show</span>
+                                <Switch checked={!cfg.hidden} onCheckedChange={() => toggleHomeBlockHidden(idx)} />
+                              </div>
                               <Button
                                 type="button"
                                 variant="outline"
@@ -2781,7 +2810,7 @@ const deleteLeaderboard = useMutation({
                                 variant="outline"
                                 size="icon"
                                 onClick={() => moveHomeBlock(idx, idx + 1)}
-                                disabled={idx === homeBlocksOrder.length - 1}
+                                disabled={idx === homeBlocksConfig.length - 1}
                                 title="Move down"
                               >
                                 <ChevronDown className="w-4 h-4" />

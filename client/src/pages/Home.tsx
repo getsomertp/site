@@ -314,30 +314,52 @@ export default function Home() {
     ? leaderboardSubtitleWithCasino.replace("{casino}", String(lbCasino.name))
     : leaderboardSubtitleNoCasino;
 
-  const parseBlocksOrder = (): string[] => {
-    const raw = (siteSettings as any)?.["home.blocksOrder"];
-    if (typeof raw !== "string" || !raw.trim()) return DEFAULT_HOME_BLOCK_ORDER;
+  type HomeBlockConfig = { id: string; hidden?: boolean };
 
-    // Prefer JSON array
+  const DEFAULT_HOME_BLOCKS: HomeBlockConfig[] = DEFAULT_HOME_BLOCK_ORDER.map((id) => ({ id, hidden: false }));
+
+  const normalizeHomeBlocksConfig = (list: HomeBlockConfig[]): HomeBlockConfig[] => {
+    const seen = new Set<string>();
+    const out: HomeBlockConfig[] = [];
+    for (const it of list) {
+      const id = String((it as any)?.id || "").trim();
+      if (!id || !DEFAULT_HOME_BLOCK_ORDER.includes(id) || seen.has(id)) continue;
+      out.push({ id, hidden: Boolean((it as any)?.hidden) });
+      seen.add(id);
+    }
+    for (const id of DEFAULT_HOME_BLOCK_ORDER) {
+      if (!seen.has(id)) out.push({ id, hidden: false });
+    }
+    return out;
+  };
+
+  const parseBlocksConfig = (): HomeBlockConfig[] => {
+    const raw = (siteSettings as any)?.["home.blocksOrder"];
+    if (typeof raw !== "string" || !raw.trim()) return DEFAULT_HOME_BLOCKS;
+
+    // Prefer JSON array (either strings OR objects: { id, hidden })
     try {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed)) {
-        const ids = parsed
-          .filter((x) => typeof x === "string")
-          .map((x) => String(x).trim())
-          .filter(Boolean);
-        if (ids.length) return ids;
+        const cfg: HomeBlockConfig[] = parsed
+          .map((x) => {
+            if (typeof x === "string") return { id: x, hidden: false };
+            if (x && typeof x === "object") return { id: (x as any).id, hidden: Boolean((x as any).hidden) };
+            return null;
+          })
+          .filter(Boolean) as any;
+        if (cfg.length) return normalizeHomeBlocksConfig(cfg);
       }
     } catch {
       // ignore
     }
 
-    // Fallback: comma-separated
+    // Fallback: comma-separated ids
     const parts = raw
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);
-    return parts.length ? parts : DEFAULT_HOME_BLOCK_ORDER;
+    return parts.length ? normalizeHomeBlocksConfig(parts.map((id) => ({ id, hidden: false }))) : DEFAULT_HOME_BLOCKS;
   };
 
   // --- Blocks ---
@@ -437,9 +459,10 @@ export default function Home() {
   );
 
   const onboardingBlock = (
-    // Slightly tighter bottom padding so the next section (Casino Partners) tucks up and avoids a large visual gap.
+    // Wrap both cards in a single "glass" surface so the column gap doesn't show raw background.
     <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+      <div className="rounded-3xl border border-white/10 bg-black/20 backdrop-blur-md p-4">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-stretch">
         <div className="lg:col-span-8">
           <Card className="glass p-6">
             <div className="flex items-start justify-between gap-4">
@@ -498,7 +521,7 @@ export default function Home() {
         </div>
 
         <div className="lg:col-span-4">
-          <Card className="glass p-6">
+          <Card className="glass p-6 h-full">
             <div className="text-white font-display font-bold text-xl">{newHereTitle}</div>
             <div className="text-white/60 text-sm mt-1">{newHereSubtitle}</div>
 
@@ -526,6 +549,7 @@ export default function Home() {
               </Button>
             </div>
           </Card>
+        </div>
         </div>
       </div>
     </section>
@@ -778,19 +802,11 @@ export default function Home() {
     leaderboard: leaderboardBlock,
   };
 
-  const desiredOrder = parseBlocksOrder();
-  const finalOrder: string[] = [];
-
-  const pushUnique = (id: string) => {
-    if (!id) return;
-    if (finalOrder.includes(id)) return;
-    if (!(id in blocks)) return;
-    finalOrder.push(id);
-  };
-
-  desiredOrder.forEach(pushUnique);
-  DEFAULT_HOME_BLOCK_ORDER.forEach(pushUnique);
-  Object.keys(blocks).forEach(pushUnique);
+  const blockConfig = parseBlocksConfig();
+  const finalOrder = blockConfig
+    .filter((b) => !b.hidden)
+    .map((b) => b.id)
+    .filter((id) => id in blocks);
 
   return (
     <div className="min-h-screen text-foreground">
