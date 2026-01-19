@@ -123,7 +123,19 @@ async function getDbTotals() {
     })
     .from(userPayments);
 
-  const givenAwayBase = Number(totalPaid || 0);
+  // Giveaways store prize as free-form text (e.g. "$500", "250 USDT").
+  // For homepage stats, we approximate by extracting the *first* number in the prize string
+  // and summing it for giveaways that have a picked winner.
+  const [{ totalGiveawayPrizes }] = await db
+    .select({
+      totalGiveawayPrizes: sql<string>`coalesce(sum(nullif(substring(replace(${giveaways.prize}, ',', '') from '([0-9]+(\\.[0-9]+)?)'), '')::numeric), 0)`,
+    })
+    .from(giveaways)
+    .where(isNotNull(giveaways.winnerId));
+
+  const paidBase = Number(totalPaid || 0);
+  const giveawayBase = Number(totalGiveawayPrizes || 0);
+  const givenAwayBase = (Number.isFinite(paidBase) ? paidBase : 0) + (Number.isFinite(giveawayBase) ? giveawayBase : 0);
 
   return {
     users: Number(userCount || 0),
