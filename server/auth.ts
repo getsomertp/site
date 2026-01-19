@@ -8,6 +8,8 @@ declare module "express-session" {
   interface SessionData {
     userId?: string;
     isAdmin?: boolean;
+    staffRole?: string;
+    staffLabel?: string;
   }
 }
 

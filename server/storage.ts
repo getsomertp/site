@@ -1,7 +1,7 @@
 import { 
   users, casinos, userCasinoAccounts, userWallets, giveaways, giveawayEntries, giveawayRequirements, leaderboardCache, userPayments,
   streamEvents, streamEventEntries, tournamentBrackets,
-  siteSettings, adminAuditLogs, leaderboards, leaderboardEntries,
+  siteSettings, siteStats, adminAuditLogs, leaderboards, leaderboardEntries,
   type User, type InsertUser,
   type Casino, type InsertCasino,
   type UserCasinoAccount, type InsertUserCasinoAccount,
@@ -14,6 +14,7 @@ import {
   type StreamEventEntry, type InsertStreamEventEntry,
   type TournamentBracket, type InsertTournamentBracket,
   type SiteSetting, type InsertSiteSetting,
+  type SiteStats, type InsertSiteStats,
   type AdminAuditLog, type InsertAdminAuditLog,
   type Leaderboard, type InsertLeaderboard,
   type LeaderboardEntry, type InsertLeaderboardEntry
@@ -69,6 +70,10 @@ createAdminAuditLog(log: InsertAdminAuditLog): Promise<AdminAuditLog>;
   getSiteSetting(key: string): Promise<SiteSetting | undefined>;
   upsertSiteSetting(setting: InsertSiteSetting): Promise<SiteSetting>;
 
+  // Site stats (homepage counters)
+  getSiteStats(): Promise<SiteStats>;
+  updateSiteStats(patch: Partial<InsertSiteStats>): Promise<SiteStats>;
+
   // Partner Leaderboards
   getLeaderboards(admin?: boolean): Promise<Leaderboard[]>;
   getActiveLeaderboards(): Promise<Leaderboard[]>;
@@ -106,6 +111,8 @@ createAdminAuditLog(log: InsertAdminAuditLog): Promise<AdminAuditLog>;
   getGiveawayEntries(giveawayId: number): Promise<GiveawayEntry[]>;
   getGiveawayEntriesWithUsers(giveawayId: number): Promise<(GiveawayEntry & { user: User })[]>;
   getGiveawayEntryCount(giveawayId: number): Promise<number>;
+  getGiveawayEntryCounts(giveawayIds: number[]): Promise<Record<number, number>>;
+  getGiveawayRequirementsForGiveaways(giveawayIds: number[]): Promise<Record<number, GiveawayRequirement[]>>;
   hasUserEntered(giveawayId: number, userId: string): Promise<boolean>;
   getUserEnteredGiveawayIds(userId: string): Promise<number[]>;
   createGiveawayEntry(entry: InsertGiveawayEntry): Promise<GiveawayEntry>;
@@ -249,6 +256,39 @@ export class DatabaseStorage implements IStorage {
         target: siteSettings.key,
         set: { value: setting.value, updatedAt: new Date() },
       })
+      .returning();
+    return row;
+  }
+
+  // Site stats (homepage counters)
+  private async ensureSiteStatsRow(): Promise<SiteStats> {
+    const [row] = await db.select().from(siteStats).limit(1);
+    if (row) return row;
+    const [created] = await db
+      .insert(siteStats)
+      .values({
+        communityMode: "users",
+        communityManual: 0,
+        communityExtra: 0,
+        givenAwayExtra: "0",
+        winnersExtra: 0,
+        liveHoursManual: 0,
+        updatedAt: new Date(),
+      } as any)
+      .returning();
+    return created;
+  }
+
+  async getSiteStats(): Promise<SiteStats> {
+    return this.ensureSiteStatsRow();
+  }
+
+  async updateSiteStats(patch: Partial<InsertSiteStats>): Promise<SiteStats> {
+    const current = await this.ensureSiteStatsRow();
+    const [row] = await db
+      .update(siteStats)
+      .set({ ...patch, updatedAt: new Date() } as any)
+      .where(eq(siteStats.id, current.id))
       .returning();
     return row;
   }
@@ -437,7 +477,7 @@ export class DatabaseStorage implements IStorage {
 
   // Giveaway Entries
   async getGiveawayEntries(giveawayId: number): Promise<GiveawayEntry[]> {
-    return db.select().from(giveawayEntries).where(eq(giveawayEntries.giveawayId, giveawayId));
+    return db.select().from(giveawayEntries).where(eq(giveawayEntries.giveawayId, giveawayId)).orderBy(asc(giveawayEntries.id));
   }
 
   async getGiveawayEntriesWithUsers(giveawayId: number): Promise<(GiveawayEntry & { user: User })[]> {
@@ -459,6 +499,36 @@ export class DatabaseStorage implements IStorage {
       .from(giveawayEntries)
       .where(eq(giveawayEntries.giveawayId, giveawayId));
     return Number(result[0]?.count || 0);
+  }
+
+  async getGiveawayEntryCounts(giveawayIds: number[]): Promise<Record<number, number>> {
+    const ids = Array.from(new Set((giveawayIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n))));
+    if (ids.length === 0) return {};
+    const rows = await db
+      .select({ giveawayId: giveawayEntries.giveawayId, count: sql<number>`count(*)` })
+      .from(giveawayEntries)
+      .where(inArray(giveawayEntries.giveawayId, ids))
+      .groupBy(giveawayEntries.giveawayId);
+
+    const outMap: Record<number, number> = {};
+    for (const r of rows) outMap[Number(r.giveawayId)] = Number((r as any).count || 0);
+    return outMap;
+  }
+
+  async getGiveawayRequirementsForGiveaways(giveawayIds: number[]): Promise<Record<number, GiveawayRequirement[]>> {
+    const ids = Array.from(new Set((giveawayIds || []).map((x) => Number(x)).filter((n) => Number.isFinite(n))));
+    if (ids.length === 0) return {};
+    const rows = await db
+      .select()
+      .from(giveawayRequirements)
+      .where(inArray(giveawayRequirements.giveawayId, ids));
+
+    const outMap: Record<number, GiveawayRequirement[]> = {};
+    for (const r of rows) {
+      const gid = Number((r as any).giveawayId);
+      (outMap[gid] ||= []).push(r);
+    }
+    return outMap;
   }
 
   async hasUserEntered(giveawayId: number, userId: string): Promise<boolean> {

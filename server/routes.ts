@@ -5,6 +5,7 @@ import homeLeaderboardRouter from "./routes/homeLeaderboard";
 import passport from "passport";
 import rateLimit from "express-rate-limit";
 import crypto from "crypto";
+import { clearStatsCache, getAdminStats, getPublicStats } from "./stats";
 import { 
   insertCasinoSchema, 
   insertGiveawaySchema,
@@ -43,6 +44,23 @@ function normalizeBool(v: unknown, fallback: boolean): boolean {
   if (["1", "true", "yes", "y", "on"].includes(s)) return true;
   if (["0", "false", "no", "n", "off"].includes(s)) return false;
   return fallback;
+}
+
+function sha256Hex(input: string): string {
+  return crypto.createHash("sha256").update(String(input)).digest("hex");
+}
+
+
+function setPublicCache(res: Response, seconds: number, swrSeconds?: number) {
+  const swr = swrSeconds ?? Math.max(30, seconds * 10);
+  res.setHeader("Cache-Control", `public, max-age=${seconds}, stale-while-revalidate=${swr}`);
+}
+
+// Hide server-side provably-fair secret seed from all API responses.
+function stripGiveawaySecrets(g: any) {
+  if (!g) return g;
+  const { pfSeed, ...rest } = g;
+  return rest;
 }
 
 function envFirst(...keys: string[]): string | undefined {
@@ -177,16 +195,99 @@ function s3Client() {
 }
 
 
-// Admin authentication middleware - uses session-based auth
-function adminAuth(req: Request, res: Response, next: NextFunction) {
-  if (req.session && req.session.isAdmin) {
-    return next();
-  }
-  return res.status(401).json({ error: "Unauthorized - Admin login required" });
+// ============ STAFF AUTH / PERMISSIONS ============
+
+type StaffRole = "owner" | "admin" | "mod" | null;
+
+type StaffPermissions = {
+  canManageCasinos: boolean;
+  canManageSiteSettings: boolean;
+  canManageLeaderboards: boolean;
+  canManageStreamEvents: boolean;
+  canViewPlayers: boolean;
+  canVerifyUsers: boolean;
+  canViewGiveawayEntries: boolean;
+  canEndGiveaways: boolean;
+  canPickWinners: boolean;
+  canViewAuditLogs: boolean;
+  canManagePayments: boolean;
+};
+
+function getStaffRole(req: Request): StaffRole {
+  const r = (req.session as any)?.staffRole;
+  if (r === "owner" || r === "admin" || r === "mod") return r;
+  // Back-compat: older sessions only set isAdmin
+  if ((req.session as any)?.isAdmin) return "admin";
+  return null;
 }
 
+function getStaffLabel(req: Request): string | null {
+  const label = (req.session as any)?.staffLabel;
+  return label ? String(label) : null;
+}
 
-async function auditAdmin(
+function staffAuth(req: Request, res: Response, next: NextFunction) {
+  const role = getStaffRole(req);
+  if (role) return next();
+  return res.status(401).json({ error: "Unauthorized" });
+}
+
+// Admin (Owner/Admin) middleware
+function adminAuth(req: Request, res: Response, next: NextFunction) {
+  const role = getStaffRole(req);
+  if (role === "owner" || role === "admin") return next();
+  return res.status(401).json({ error: "Unauthorized - Admin required" });
+}
+
+function permsForRole(role: StaffRole): StaffPermissions {
+  if (role === "owner" || role === "admin") {
+    return {
+      canManageCasinos: true,
+      canManageSiteSettings: true,
+      canManageLeaderboards: true,
+      canManageStreamEvents: true,
+      canViewPlayers: true,
+      canVerifyUsers: true,
+      canViewGiveawayEntries: true,
+      canEndGiveaways: true,
+      canPickWinners: true,
+      canViewAuditLogs: true,
+      canManagePayments: true,
+    };
+  }
+
+  if (role === "mod") {
+    return {
+      canManageCasinos: false,
+      canManageSiteSettings: false,
+      canManageLeaderboards: false,
+      canManageStreamEvents: false,
+      canViewPlayers: true,
+      canVerifyUsers: true,
+      canViewGiveawayEntries: true,
+      canEndGiveaways: true,
+      canPickWinners: true,
+      canViewAuditLogs: false,
+      canManagePayments: false,
+    };
+  }
+
+  return {
+    canManageCasinos: false,
+    canManageSiteSettings: false,
+    canManageLeaderboards: false,
+    canManageStreamEvents: false,
+    canViewPlayers: false,
+    canVerifyUsers: false,
+    canViewGiveawayEntries: false,
+    canEndGiveaways: false,
+    canPickWinners: false,
+    canViewAuditLogs: false,
+    canManagePayments: false,
+  };
+}
+
+async function auditAction(
   req: Request,
   action: string,
   entityType?: string,
@@ -194,12 +295,19 @@ async function auditAdmin(
   details?: any,
 ) {
   try {
-    if (!req.session?.isAdmin) return;
+    const role = getStaffRole(req);
+    if (!role) return;
+    const actorUserId = getAuthedUserId(req) || null;
+    const actorLabel = getStaffLabel(req) || (role === "owner" ? "Owner" : role);
+
     await storage.createAdminAuditLog({
       action,
       entityType: entityType ?? null,
       entityId: entityId !== undefined && entityId !== null ? String(entityId) : null,
       details: details ? JSON.stringify(details) : null,
+      actorUserId,
+      actorRole: role,
+      actorLabel,
       ip: req.ip || null,
       userAgent: req.get("user-agent") || null,
     } as any);
@@ -253,7 +361,7 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 function requireAuthOrAdmin(req: Request, res: Response, next: NextFunction) {
   // Admin sessions may not have a linked userId (admin password login),
   // but should still be able to access admin-only resources.
-  if (req.session?.isAdmin) return next();
+  if (getStaffRole(req)) return next();
   return requireAuth(req, res, next);
 }
 
@@ -330,8 +438,10 @@ app.get("/api/public/files/:key(*)", async (req: Request, res: Response) => {
     const key = decodeURIComponent(rawKey).replace(/\\/g, "/");
     if (!key || key.includes("..")) return res.status(400).json({ error: "Bad key" });
 
-    // Public assets only (casino logos). Everything else should use an auth-gated route.
-    if (!key.startsWith("casinos/")) {
+    // Public assets only. Everything else should use an auth-gated route.
+    // - casinos/: partner logos
+    // - site/: header logo + background theme image
+    if (!(key.startsWith("casinos/") || key.startsWith("site/"))) {
       return res.status(404).json({ error: "Not found" });
     }
 
@@ -352,7 +462,7 @@ app.get("/api/public/files/:key(*)", async (req: Request, res: Response) => {
 });
 
 // Private file proxy (wallet proofs, etc). Admin-only.
-app.get("/api/files/:key(*)", adminAuth, async (req: Request, res: Response) => {
+app.get("/api/files/:key(*)", staffAuth, async (req: Request, res: Response) => {
   try {
     const rawKey = String((req.params as any).key || "");
     const key = decodeURIComponent(rawKey).replace(/\\/g, "/");
@@ -450,7 +560,7 @@ app.post("/api/admin/uploads/casino-logo", adminAuth, upload.single("logo"), asy
 
     const ext = (file.originalname.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "");
     const key = `casinos/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
-    auditAdmin(req, "casino.logo.upload", "file", key, { mimetype: file.mimetype, size: file.size });
+    auditAction(req, "casino.logo.upload", "file", key, { mimetype: file.mimetype, size: file.size });
 
     const bucket = getObjectStorageConfig().bucket;
     const client = s3Client();
@@ -482,6 +592,103 @@ app.post("/api/admin/uploads/casino-logo", adminAuth, upload.single("logo"), asy
   }
 });
 
+// Admin: upload site logo (S3/R2 if configured, else local)
+app.post("/api/admin/uploads/site-logo", adminAuth, upload.single("logo"), async (req: Request, res: Response) => {
+  try {
+    const file = (req as any).file as Express.Multer.File | undefined;
+    if (!file) return res.status(400).json({ error: "No file uploaded" });
+
+    const ext = (file.originalname.split(".").pop() || "png")
+      .toLowerCase()
+      .replace(/[^a-z0-9]/g, "");
+    const key = `site/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
+    auditAction(req, "site.logo.upload", "file", key, { mimetype: file.mimetype, size: file.size });
+
+    const bucket = getObjectStorageConfig().bucket;
+    const client = s3Client();
+
+    if (client && bucket) {
+      await client.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Body: file.buffer,
+          ContentType: file.mimetype || "application/octet-stream",
+          CacheControl: "public, max-age=31536000, immutable",
+        }),
+      );
+
+      const publicUrl = getPublicUrl(key);
+      if (!publicUrl) {
+        return res.status(500).json({
+          error:
+            "Uploaded, but no public URL can be formed. Set S3_PUBLIC_BASE_URL or enable S3_USE_PROXY.",
+        });
+      }
+      return res.json({ url: publicUrl, key });
+    }
+
+    // Fallback: local filesystem
+    const localName = key.replace(/\//g, "_");
+    const outPath = path.join(uploadsDir, localName);
+    fs.writeFileSync(outPath, file.buffer);
+    return res.json({ url: `/uploads/${localName}` });
+  } catch (err: any) {
+    return res.status(500).json({ error: err?.message || "Failed to upload logo" });
+  }
+});
+
+// Admin: upload site background image (S3/R2 if configured, else local)
+app.post(
+  "/api/admin/uploads/site-background",
+  adminAuth,
+  upload.single("background"),
+  async (req: Request, res: Response) => {
+    try {
+      const file = (req as any).file as Express.Multer.File | undefined;
+      if (!file) return res.status(400).json({ error: "No file uploaded" });
+
+      const ext = (file.originalname.split(".").pop() || "webp")
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "");
+      const key = `site/background/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
+      auditAction(req, "site.background.upload", "file", key, { mimetype: file.mimetype, size: file.size });
+
+      const bucket = getObjectStorageConfig().bucket;
+      const client = s3Client();
+
+      if (client && bucket) {
+        await client.send(
+          new PutObjectCommand({
+            Bucket: bucket,
+            Key: key,
+            Body: file.buffer,
+            ContentType: file.mimetype || "application/octet-stream",
+            CacheControl: "public, max-age=31536000, immutable",
+          }),
+        );
+
+        const publicUrl = getPublicUrl(key);
+        if (!publicUrl) {
+          return res.status(500).json({
+            error:
+              "Uploaded, but no public URL can be formed. Set S3_PUBLIC_BASE_URL or enable S3_USE_PROXY.",
+          });
+        }
+        return res.json({ url: publicUrl, key });
+      }
+
+      // Fallback: local filesystem
+      const localName = key.replace(/\//g, "_");
+      const outPath = path.join(uploadsDir, localName);
+      fs.writeFileSync(outPath, file.buffer);
+      return res.json({ url: `/uploads/${localName}` });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "Failed to upload background" });
+    }
+  },
+);
+
 
 
 app.get("/api/auth/me", async (req: Request, res: Response) => {
@@ -510,6 +717,8 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
           kickUsername: user.kickUsername,
           kickVerified: user.kickVerified,
           isAdmin: user.isAdmin,
+          role: (user as any).role || "user",
+          isStaff: Boolean((user as any).isAdmin) || String((user as any).role || "").toLowerCase() === "mod" || String((user as any).role || "").toLowerCase() === "admin",
         },
       });
     } catch {
@@ -546,12 +755,24 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
           console.error("⚠️ Session regenerate failed", regenErr);
           // Best-effort fallback: still try to set session fields
           req.session.userId = user.id;
-          req.session.isAdmin = Boolean(user.isAdmin);
+        // Map DB role to staff session role
+        const dbRole = String((user as any).role || "user").toLowerCase();
+        const staffRole: any = dbRole === "mod" ? "mod" : (Boolean((user as any).isAdmin) || dbRole === "admin" ? "admin" : null);
+        req.session.staffRole = staffRole || undefined;
+        req.session.staffLabel = (user as any).discordUsername || (user as any).kickUsername || undefined;
+        // Back-compat: isAdmin means Owner/Admin (mods are false)
+        req.session.isAdmin = staffRole === "admin";
           return req.session.save(() => res.redirect("/"));
         }
 
         req.session.userId = user.id;
-        req.session.isAdmin = Boolean(user.isAdmin);
+        // Map DB role to staff session role
+        const dbRole = String((user as any).role || "user").toLowerCase();
+        const staffRole: any = dbRole === "mod" ? "mod" : (Boolean((user as any).isAdmin) || dbRole === "admin" ? "admin" : null);
+        req.session.staffRole = staffRole || undefined;
+        req.session.staffLabel = (user as any).discordUsername || (user as any).kickUsername || undefined;
+        // Back-compat: isAdmin means Owner/Admin (mods are false)
+        req.session.isAdmin = staffRole === "admin";
 
         req.session.save((saveErr) => {
           if (saveErr) console.error("⚠️ Session save failed", saveErr);
@@ -603,11 +824,13 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
             return res.status(500).json({ error: "Login failed" });
           }
           req.session.isAdmin = true;
+          req.session.staffRole = "owner";
+          req.session.staffLabel = "Owner";
           req.session.save((err) => {
             if (err) {
               return res.status(500).json({ error: getErrorMessage(err, "Login failed") });
             }
-            auditAdmin(req, "admin.login");
+            auditAction(req, "admin.login");
             return res.json({ success: true });
           });
         });
@@ -622,29 +845,77 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   
   // Admin logout
   app.post("/api/admin/logout", (req: Request, res: Response) => {
+    // Log before destroying session
+    auditAction(req, "admin.logout");
     req.session.destroy((err) => {
       if (err) {
         return res.status(500).json({ error: getErrorMessage(err, "Logout failed") });
       }
-      auditAdmin(req, "admin.logout");
       res.json({ success: true });
     });
   });
   
-  // Check admin status
+  // Check staff status + permissions
   app.get("/api/admin/me", (req: Request, res: Response) => {
-    res.json({ isAdmin: req.session?.isAdmin || false });
+    const role = getStaffRole(req);
+    const permissions = permsForRole(role);
+    return res.json({
+      isStaff: Boolean(role),
+      role,
+      permissions,
+      // Back-compat
+      isAdmin: role === "owner" || role === "admin",
+    });
   });
   
-  // ============ CASINOS ============
+  // Basic uptime endpoint (for monitors)
+  app.get("/api/uptime", async (req: Request, res: Response) => {
+    try {
+      const tel = (req.app as any).locals.telemetry || {};
+      const startedAt = typeof tel.startedAt === "number" ? tel.startedAt : Date.now();
+      const uptimeMs = Date.now() - startedAt;
+      res.json({
+        ok: true,
+        uptimeMs,
+        startedAt: new Date(startedAt).toISOString(),
+        requests: tel.requests ?? null,
+        apiRequests: tel.apiRequests ?? null,
+        errors: tel.errors ?? null,
+        lastErrorPath: tel.lastErrorPath ?? null,
+        lastErrorAt: tel.lastErrorAt ?? null,
+        version: process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_SHA || null,
+      });
+    } catch {
+      res.status(500).json({ ok: false });
+    }
+  });
+
+// ============ CASINOS ============
   
   // Get all active casinos
   app.get("/api/casinos", async (req: Request, res: Response) => {
     try {
+      setPublicCache(res, 60);
       const casinos = await storage.getCasinos();
       res.json(casinos);
     } catch (error) {
       res.status(500).json({ error: getErrorMessage(error, "Failed to fetch casinos") });
+    }
+  });
+
+  // Get single casino by slug (public)
+  app.get("/api/casinos/slug/:slug", async (req: Request, res: Response) => {
+    try {
+      setPublicCache(res, 60);
+      const slug = String(req.params.slug || "").trim();
+      if (!slug) return res.status(400).json({ error: "Missing slug" });
+      const casino = await storage.getCasinoBySlug(slug);
+      if (!casino || casino.isActive === false) {
+        return res.status(404).json({ error: "Casino not found" });
+      }
+      return res.json(casino);
+    } catch (error) {
+      return res.status(500).json({ error: getErrorMessage(error, "Failed to fetch casino") });
     }
   });
 
@@ -664,6 +935,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
   // Get single casino
   app.get("/api/casinos/:id", async (req: Request, res: Response) => {
     try {
+      setPublicCache(res, 60);
       const id = parseInt(req.params.id);
       const casino = await storage.getCasino(id);
       if (!casino) {
@@ -697,7 +969,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
         logo: normalizeHttpUrl(parsed.logo) || parsed.logo,
       };
       const casino = await storage.createCasino(data);
-      auditAdmin(req, "casino.create", "casino", casino.id, { name: casino.name });
+      auditAction(req, "casino.create", "casino", casino.id, { name: casino.name });
       res.status(201).json(casino);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -719,7 +991,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
         ...(parsed.logo !== undefined ? { logo: normalizeHttpUrl(parsed.logo) || parsed.logo } : {}),
       };
       const casino = await storage.updateCasino(id, data);
-      if (casino) { auditAdmin(req, "casino.update", "casino", id, { name: casino.name }); }
+      if (casino) { auditAction(req, "casino.update", "casino", id, { name: casino.name }); }
       if (!casino) {
         return res.status(404).json({ error: "Casino not found" });
       }
@@ -747,6 +1019,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
   // Public: minimal settings for buttons/links
   app.get("/api/site/settings", async (_req: Request, res: Response) => {
     try {
+      setPublicCache(res, 60);
       const rows = await storage.getSiteSettings();
       const out: Record<string, string> = {};
       for (const r of rows) out[r.key] = r.value;
@@ -756,15 +1029,32 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
     }
   });
 
-  // Admin: list + upsert settings
-  app.get("/api/admin/site/settings", adminAuth, async (_req: Request, res: Response) => {
+  // Public: homepage stats (computed + manual adjustments)
+  app.get("/api/site/stats", async (_req: Request, res: Response) => {
+    try {
+      setPublicCache(res, 15);
+      const stats = await getPublicStats();
+      res.json(stats);
+    } catch (error) {
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch site stats") });
+    }
+  });
+
+  // Admin: list settings as a simple key/value object (matches the client UI expectations)
+  const siteSettingsAsRecord = async (_req: Request, res: Response) => {
     try {
       const rows = await storage.getSiteSettings();
-      res.json(rows);
+      const out: Record<string, string> = {};
+      for (const r of rows) out[r.key] = r.value;
+      res.json(out);
     } catch (error) {
       res.status(500).json({ error: getErrorMessage(error, "Failed to fetch site settings") });
     }
-  });
+  };
+
+  app.get("/api/admin/site/settings", adminAuth, siteSettingsAsRecord);
+  // Back-compat alias (older UI used the hyphenated route)
+  app.get("/api/admin/site-settings", adminAuth, siteSettingsAsRecord);
 
   app.post("/api/admin/site/settings", adminAuth, async (req: Request, res: Response) => {
     try {
@@ -777,10 +1067,89 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
     }
   });
 
+  // Back-compat alias for POST
+  app.post("/api/admin/site-settings", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const data = insertSiteSettingSchema.parse(req.body);
+      const row = await storage.upsertSiteSetting(data);
+      res.status(201).json(row);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to upsert site setting") });
+    }
+  });
+
+  // Admin: configure homepage stats (manual tweaks / discord sync)
+  app.get("/api/admin/site/stats", adminAuth, async (_req: Request, res: Response) => {
+    try {
+      const out = await getAdminStats();
+      res.json(out);
+    } catch (error) {
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch site stats") });
+    }
+  });
+
+  const updateSiteStatsSchema = z
+    .object({
+      communityMode: z.enum(["users", "discord", "manual"]).optional(),
+      discordGuildId: z.string().trim().optional().nullable(),
+      communityManual: z.coerce.number().int().min(0).optional(),
+      communityExtra: z.coerce.number().int().optional(),
+      givenAwayExtra: z.coerce.number().optional(),
+      winnersExtra: z.coerce.number().int().optional(),
+      liveHoursManual: z.coerce.number().int().min(0).optional(),
+    })
+    .strict();
+
+  app.put("/api/admin/site/stats", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const body = updateSiteStatsSchema.parse(req.body || {});
+      const patch: any = {};
+      if (body.communityMode !== undefined) patch.communityMode = body.communityMode;
+      if (body.discordGuildId !== undefined) {
+        const v = body.discordGuildId === null ? "" : String(body.discordGuildId || "");
+        patch.discordGuildId = v.trim() ? v.trim() : null;
+      }
+      if (body.communityManual !== undefined) patch.communityManual = Number(body.communityManual);
+      if (body.communityExtra !== undefined) patch.communityExtra = Number(body.communityExtra);
+      if (body.givenAwayExtra !== undefined) {
+        const n = Number(body.givenAwayExtra);
+        patch.givenAwayExtra = Number.isFinite(n) ? String(n) : "0";
+      }
+      if (body.winnersExtra !== undefined) patch.winnersExtra = Number(body.winnersExtra);
+      if (body.liveHoursManual !== undefined) patch.liveHoursManual = Number(body.liveHoursManual);
+
+      await storage.updateSiteStats(patch);
+      clearStatsCache();
+
+      // Audit
+      try {
+        await storage.createAdminAuditLog({
+          action: "site.stats.update",
+          entityType: "site_stats",
+          entityId: "1",
+          details: JSON.stringify(patch),
+          actorUserId: (req.session as any)?.userId,
+          actorRole: (req.session as any)?.staffRole || ((req.session as any)?.isAdmin ? "admin" : undefined),
+          actorLabel: (req.session as any)?.staffLabel,
+          ip: getClientIp(req),
+          userAgent: String(req.headers["user-agent"] || ""),
+        } as any);
+      } catch {}
+
+      const out = await getAdminStats();
+      res.json(out);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to update site stats") });
+    }
+  });
+
   // ============ LEADERBOARDS (per partner) ============
   // Public: list active leaderboards (no secrets)
   app.get("/api/leaderboards/active", async (_req: Request, res: Response) => {
     try {
+      setPublicCache(res, 15);
       const lbs = await storage.getActiveLeaderboards();
       // Strip sensitive API config for public responses
       const publicLbs = lbs.map((l) => ({
@@ -827,7 +1196,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
     try {
       const data = insertLeaderboardSchema.parse(req.body);
       const lb = await storage.createLeaderboard(data);
-      auditAdmin(req, "leaderboard.create", "leaderboard", lb.id, { name: lb.name, casinoId: lb.casinoId });
+      auditAction(req, "leaderboard.create", "leaderboard", lb.id, { name: lb.name, casinoId: lb.casinoId });
       res.status(201).json(lb);
     } catch (error) {
       if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
@@ -909,6 +1278,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
   // Get all giveaways
   app.get("/api/giveaways", async (req: Request, res: Response) => {
     try {
+      setPublicCache(res, 10);
       const giveaways = await storage.getGiveaways();
       const userId = (req.session as any)?.userId as string | undefined;
 
@@ -918,15 +1288,17 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
 
       const enteredSet = userId ? new Set(await storage.getUserEnteredGiveawayIds(userId)) : null;
 
-      const giveawaysWithDetails = await Promise.all(
-        giveaways.map(async (g) => ({
-          ...g,
-          entries: await storage.getGiveawayEntryCount(g.id),
-          requirements: withImplicitGiveawayRequirements(g, await storage.getGiveawayRequirements(g.id)),
-          hasEntered: enteredSet ? enteredSet.has(g.id) : false,
-          winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
-        }))
-      );
+      const giveawayIds = giveaways.map((g: any) => Number(g.id));
+      const countsMap = await storage.getGiveawayEntryCounts(giveawayIds);
+      const reqsMap = await storage.getGiveawayRequirementsForGiveaways(giveawayIds);
+
+      const giveawaysWithDetails = giveaways.map((g: any) => ({
+        ...stripGiveawaySecrets(g),
+        entries: Number(countsMap[Number(g.id)] || 0),
+        requirements: withImplicitGiveawayRequirements(g, reqsMap[Number(g.id)] || []),
+        hasEntered: enteredSet ? enteredSet.has(Number(g.id)) : false,
+        winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
+      }));
 
       res.json(giveawaysWithDetails);
     } catch (error) {
@@ -946,15 +1318,17 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
 
       const enteredSet = userId ? new Set(await storage.getUserEnteredGiveawayIds(userId)) : null;
 
-      const giveawaysWithDetails = await Promise.all(
-        giveaways.map(async (g) => ({
-          ...g,
-          entries: await storage.getGiveawayEntryCount(g.id),
-          requirements: withImplicitGiveawayRequirements(g, await storage.getGiveawayRequirements(g.id)),
-          hasEntered: enteredSet ? enteredSet.has(g.id) : false,
-          winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
-        }))
-      );
+      const giveawayIds = giveaways.map((g: any) => Number(g.id));
+      const countsMap = await storage.getGiveawayEntryCounts(giveawayIds);
+      const reqsMap = await storage.getGiveawayRequirementsForGiveaways(giveawayIds);
+
+      const giveawaysWithDetails = giveaways.map((g: any) => ({
+        ...stripGiveawaySecrets(g),
+        entries: Number(countsMap[Number(g.id)] || 0),
+        requirements: withImplicitGiveawayRequirements(g, reqsMap[Number(g.id)] || []),
+        hasEntered: enteredSet ? enteredSet.has(Number(g.id)) : false,
+        winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
+      }));
 
       res.json(giveawaysWithDetails);
     } catch (error) {
@@ -969,7 +1343,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
       const limit = Number((req.query as any)?.limit || 6);
       const rows = await storage.getRecentGiveawayWinners(limit);
       const payload = rows.map(({ giveaway, winner, casino }) => ({
-        ...giveaway,
+        ...stripGiveawaySecrets(giveaway),
         casino: casino ? { id: casino.id, name: casino.name, slug: casino.slug, logo: (casino as any).logo || null } : null,
         winner: toWinnerSummary(winner),
       }));
@@ -994,14 +1368,67 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
       const hasEntered = userId ? await storage.hasUserEntered(id, userId) : false;
 
       const winnerUser = giveaway.winnerId ? await storage.getUser(String(giveaway.winnerId)) : undefined;
-      res.json({ ...giveaway, entries, requirements, hasEntered, winner: giveaway.winnerId ? toWinnerSummary(winnerUser) : null });
+      res.json({ ...stripGiveawaySecrets(giveaway), entries, requirements, hasEntered, winner: giveaway.winnerId ? toWinnerSummary(winnerUser) : null });
     } catch (error) {
       res.status(500).json({ error: getErrorMessage(error, "Failed to fetch giveaway") });
     }
   });
 
+
+  // Public: provably-fair proof payload (lets anyone reproduce the winner selection)
+  app.get("/api/giveaways/:id/proof", async (req: Request, res: Response) => {
+    try {
+      const giveawayId = parseInt(req.params.id);
+      if (!Number.isFinite(giveawayId)) return res.status(400).json({ error: "Invalid id" });
+
+      const giveaway = await storage.getGiveaway(giveawayId);
+      if (!giveaway) return res.status(404).json({ error: "Giveaway not found" });
+
+      const entries = await storage.getGiveawayEntries(giveawayId); // ordered by id asc
+      const entryIds = entries.map((e: any) => Number(e.id));
+      const entryIdsCsv = entryIds.map((id) => String(id)).join(",");
+      const entriesHash = sha256Hex(entryIdsCsv);
+
+      const seedCommitHash = (giveaway as any).pfSeedHash || null;
+      const revealedSeed = (giveaway as any).winnerSeed || null;
+
+      let computed: any = null;
+      let ok = false;
+      if (revealedSeed && entryIds.length > 0) {
+        const pickHash = sha256Hex(`${revealedSeed}|${giveawayId}|${entryIdsCsv}`);
+        const winnerIndex = Number(BigInt("0x" + pickHash) % BigInt(entryIds.length));
+        const winnerEntry = entries[winnerIndex];
+        computed = { pickHash, winnerIndex, winnerEntryId: winnerEntry?.id || null, winnerUserId: winnerEntry?.userId || null };
+        ok = Boolean((giveaway as any).winnerId) && String((giveaway as any).winnerId) === String(computed.winnerUserId);
+      }
+
+      const winnerUser = (giveaway as any).winnerId ? await storage.getUser(String((giveaway as any).winnerId)) : null;
+      return res.json({
+        giveawayId,
+        title: giveaway.title,
+        endsAt: giveaway.endsAt,
+        entryCount: entryIds.length,
+        entryIds,
+        entriesHash,
+        seedCommitHash,
+        revealedSeed,
+        stored: {
+          pfEntriesHash: (giveaway as any).pfEntriesHash || null,
+          pfWinnerIndex: (giveaway as any).pfWinnerIndex ?? null,
+          pfWinnerEntryId: (giveaway as any).pfWinnerEntryId ?? null,
+          winnerId: (giveaway as any).winnerId || null,
+        },
+        computed,
+        ok,
+        winner: winnerUser ? toWinnerSummary(winnerUser) : null,
+      });
+    } catch (error) {
+      return res.status(500).json({ error: getErrorMessage(error, "Failed to build proof") });
+    }
+  });
+
   // Admin: get all giveaways (current + old) with entry counts, requirements, and winner info
-  app.get("/api/admin/giveaways", adminAuth, async (req: Request, res: Response) => {
+  app.get("/api/admin/giveaways", staffAuth, async (req: Request, res: Response) => {
     try {
       const status = String((req.query as any)?.status || "all").toLowerCase(); // all|active|ended
       const all = await storage.getGiveaways();
@@ -1019,7 +1446,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
 
       const out = await Promise.all(
         filtered.map(async (g: any) => ({
-          ...g,
+          ...stripGiveawaySecrets(g),
           entries: await storage.getGiveawayEntryCount(g.id),
           requirements: withImplicitGiveawayRequirements(g, await storage.getGiveawayRequirements(g.id)),
           winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
@@ -1033,7 +1460,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
   });
 
   // Admin: giveaway entry log (who entered + when)
-  app.get("/api/admin/giveaways/:id/entries", adminAuth, async (req: Request, res: Response) => {
+  app.get("/api/admin/giveaways/:id/entries", staffAuth, async (req: Request, res: Response) => {
     try {
       const giveawayId = parseInt(req.params.id);
       if (!Number.isFinite(giveawayId)) return res.status(400).json({ error: "Invalid id" });
@@ -1056,9 +1483,35 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
     }
   });
 
-  // Admin: pick and lock a winner (random) for an ended giveaway
-  app.post("/api/admin/giveaways/:id/pick-winner", adminAuth, async (req: Request, res: Response) => {
+  // Staff: end a giveaway early (immediately sets endsAt=now)
+  app.post("/api/admin/giveaways/:id/end", staffAuth, async (req: Request, res: Response) => {
     try {
+      const role = getStaffRole(req);
+      const permissions = permsForRole(role);
+      if (!permissions.canEndGiveaways) return res.status(403).json({ error: "Forbidden" });
+
+      const giveawayId = parseInt(req.params.id);
+      if (!Number.isFinite(giveawayId)) return res.status(400).json({ error: "Invalid id" });
+
+      const giveaway = await storage.getGiveaway(giveawayId);
+      if (!giveaway) return res.status(404).json({ error: "Giveaway not found" });
+
+      const now = new Date();
+      const updated = await storage.updateGiveaway(giveawayId, { isActive: false, endsAt: now } as any);
+      await auditAction(req, "giveaway.end", "giveaway", giveawayId, { title: giveaway.title });
+      return res.json(stripGiveawaySecrets(updated || { ...giveaway, isActive: false, endsAt: now }));
+    } catch (error) {
+      return res.status(500).json({ error: getErrorMessage(error, "Failed to end giveaway") });
+    }
+  });
+
+  // Staff: pick and lock a winner (provably-fair, deterministic from seed) for an ended giveaway
+  app.post("/api/admin/giveaways/:id/pick-winner", staffAuth, async (req: Request, res: Response) => {
+    try {
+      const role = getStaffRole(req);
+      const permissions = permsForRole(role);
+      if (!permissions.canPickWinners) return res.status(403).json({ error: "Forbidden" });
+
       const giveawayId = parseInt(req.params.id);
       if (!Number.isFinite(giveawayId)) return res.status(400).json({ error: "Invalid id" });
 
@@ -1066,39 +1519,90 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
       if (!giveaway) return res.status(404).json({ error: "Giveaway not found" });
 
       const force = Boolean((req.body as any)?.force) || String((req.query as any)?.force || "") === "1";
+      if (force && role !== "owner" && role !== "admin") {
+        return res.status(403).json({ error: "Forbidden" });
+      }
 
-      const active = isGiveawayActiveNow(giveaway);
-      if (active) {
-        return res.status(400).json({ error: "Giveaway is still active" });
+      const now = new Date();
+      const endsAt = new Date(giveaway.endsAt);
+      if (!(endsAt.getTime() <= now.getTime())) {
+        return res.status(400).json({ error: "Giveaway has not ended yet" });
       }
 
       if (giveaway.winnerId && !force) {
         const winnerUser = await storage.getUser(String(giveaway.winnerId));
         return res.json({
-          giveaway: { ...giveaway, winner: giveaway.winnerId ? toWinnerSummary(winnerUser) : null },
+          giveaway: { ...stripGiveawaySecrets(giveaway), winner: giveaway.winnerId ? toWinnerSummary(winnerUser) : null },
           winnerId: giveaway.winnerId,
           winner: giveaway.winnerId ? toWinnerSummary(winnerUser) : null,
           alreadyPicked: true,
         });
       }
 
-      const entries = await storage.getGiveawayEntries(giveawayId);
+      const entries = await storage.getGiveawayEntries(giveawayId); // ordered by id asc (storage enforces)
       if (!entries.length) {
         return res.status(400).json({ error: "No entries to pick from" });
       }
 
-      const winnerEntry = entries[crypto.randomInt(0, entries.length)];
+      // Use a committed secret seed (pfSeed). For new giveaways we commit at creation.
+      // For legacy giveaways (missing commit), we commit on first pick; this is still auditable but not as strong.
+      const priorPfSeed = String((giveaway as any).pfSeed || "");
+      const priorPfSeedHash = String((giveaway as any).pfSeedHash || "");
+      const generatedNewSeed = force || !priorPfSeed || !priorPfSeedHash;
+      const pfSeed = generatedNewSeed ? crypto.randomBytes(32).toString("hex") : priorPfSeed;
+      const pfSeedHash = generatedNewSeed ? sha256Hex(pfSeed) : priorPfSeedHash;
+
+      // Deterministic snapshot of entry IDs (ordered)
+      const entryIdsCsv = entries.map((e: any) => String(e.id)).join(",");
+      const entriesHash = sha256Hex(entryIdsCsv);
+
+      // Deterministic winner index derived from (seed | giveawayId | entryIdsCsv)
+      const hashHex = sha256Hex(`${pfSeed}|${giveawayId}|${entryIdsCsv}`);
+      const idx = Number(BigInt("0x" + hashHex) % BigInt(entries.length));
+      const winnerEntry = entries[idx];
       const winnerId = winnerEntry.userId;
 
-      const updated = await storage.updateGiveaway(giveawayId, { winnerId, isActive: false });
+      const actor = getStaffLabel(req) || getAuthedUserId(req) || (role === "owner" ? "Owner" : String(role));
+      const updated = await storage.updateGiveaway(giveawayId, {
+        winnerId,
+        isActive: false,
+        winnerPickedAt: now,
+        winnerPickedBy: actor,
+
+        // reveal seed after winner is picked
+        winnerSeed: pfSeed,
+
+        // provably-fair metadata
+        pfSeed,
+        pfSeedHash,
+        pfEntriesHash: entriesHash,
+        pfWinnerEntryId: winnerEntry.id,
+        pfWinnerIndex: idx,
+      } as any);
       const winnerUser = await storage.getUser(String(winnerId));
 
+      await auditAction(req, "giveaway.pick_winner", "giveaway", giveawayId, {
+        title: giveaway.title,
+        winnerId,
+        entries: entries.length,
+        forced: force,
+        seedCommitHash: pfSeedHash,
+        entriesHash,
+        winnerIndex: idx,
+        winnerEntryId: winnerEntry.id,
+        pickHash: hashHex,
+        committedNow: generatedNewSeed && (!priorPfSeed || !priorPfSeedHash) && !force,
+      });
+
       return res.json({
-        giveaway: updated ? { ...updated, winner: toWinnerSummary(winnerUser) } : { ...giveaway, winnerId, winner: toWinnerSummary(winnerUser) },
+        giveaway: updated
+          ? { ...stripGiveawaySecrets(updated), winner: toWinnerSummary(winnerUser) }
+          : { ...stripGiveawaySecrets(giveaway), winnerId, winner: toWinnerSummary(winnerUser) },
         winnerId,
         winner: toWinnerSummary(winnerUser),
         alreadyPicked: false,
       });
+
     } catch (error) {
       res.status(500).json({ error: getErrorMessage(error, "Failed to pick winner") });
     }
@@ -1120,16 +1624,20 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
         giveawayData.maxEntries = Number.isFinite(n) ? n : null;
       }
 
-      const data = insertGiveawaySchema.parse(giveawayData);
+      // Provably-fair seed commitment: we generate a secret seed now and only reveal it after the giveaway ends.
+      // Users can see pfSeedHash immediately (commitment), and later verify once winnerSeed is revealed.
+      const pfSeed = crypto.randomBytes(32).toString("hex");
+      const pfSeedHash = sha256Hex(pfSeed);
+      const data = insertGiveawaySchema.parse({ ...giveawayData, pfSeed, pfSeedHash });
       const giveaway = await storage.createGiveaway(data);
-      auditAdmin(req, "giveaway.create", "giveaway", giveaway.id, { title: giveaway.title, casinoId: giveaway.casinoId });
+      auditAction(req, "giveaway.create", "giveaway", giveaway.id, { title: giveaway.title, casinoId: giveaway.casinoId });
       
       if (requirements && Array.isArray(requirements)) {
         await storage.setGiveawayRequirements(giveaway.id, requirements);
       }
       
       const reqs = withImplicitGiveawayRequirements(giveaway, await storage.getGiveawayRequirements(giveaway.id));
-      res.status(201).json({ ...giveaway, requirements: reqs });
+      res.status(201).json({ ...stripGiveawaySecrets(giveaway), requirements: reqs });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
@@ -1154,9 +1662,18 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
         giveawayData.maxEntries = Number.isFinite(n) ? n : null;
       }
 
+
+      // Do not allow editing any provably-fair or winner-determinant fields from the client.
+      delete giveawayData.pfSeed;
+      delete giveawayData.pfSeedHash;
+      delete giveawayData.pfEntriesHash;
+      delete giveawayData.pfWinnerEntryId;
+      delete giveawayData.pfWinnerIndex;
+      delete giveawayData.winnerSeed;
+
       const data = insertGiveawaySchema.partial().parse(giveawayData);
       const giveaway = await storage.updateGiveaway(id, data);
-      if (giveaway) { auditAdmin(req, "giveaway.update", "giveaway", id, { title: giveaway.title, casinoId: giveaway.casinoId }); }
+      if (giveaway) { auditAction(req, "giveaway.update", "giveaway", id, { title: giveaway.title, casinoId: giveaway.casinoId }); }
       if (!giveaway) {
         return res.status(404).json({ error: "Giveaway not found" });
       }
@@ -1166,7 +1683,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
       }
       
       const reqs = withImplicitGiveawayRequirements(giveaway, await storage.getGiveawayRequirements(id));
-      res.json({ ...giveaway, requirements: reqs });
+      res.json({ ...stripGiveawaySecrets(giveaway), requirements: reqs });
     } catch (error) {
       if (error instanceof z.ZodError) {
         return res.status(400).json({ error: error.errors });
@@ -1357,12 +1874,18 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
         odId: z.string().min(1).optional(),
       });
 
-      const patch = req.session?.isAdmin
-        ? insertUserCasinoAccountSchema.partial().parse(req.body)
-        : userPatchSchema.parse(req.body);
+      const role = getStaffRole(req);
+      const isAdminLike = role === "owner" || role === "admin" || Boolean(req.session?.isAdmin);
+      const isMod = role === "mod";
 
-      // If a non-admin changes anything, require re-verification
-      const data = req.session?.isAdmin ? patch : { ...patch, verified: false };
+      const patch = isAdminLike
+        ? insertUserCasinoAccountSchema.partial().parse(req.body)
+        : isMod
+          ? z.object({ verified: z.boolean() }).parse(req.body)
+          : userPatchSchema.parse(req.body);
+
+      // If a non-staff user changes anything, require re-verification
+      const data = (isAdminLike || isMod) ? patch : { ...patch, verified: false };
 
       const account = await storage.updateUserCasinoAccount(id, data);
       if (!account) {
@@ -1371,7 +1894,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
 
       // Audit verification toggles when performed by an admin
       if (req.session?.isAdmin && typeof (patch as any).verified === "boolean" && (patch as any).verified !== (existing as any).verified) {
-        auditAdmin(
+        auditAction(
           req,
           (patch as any).verified ? "user.casino_account.verify" : "user.casino_account.unverify",
           "user_casino_account",
@@ -1463,11 +1986,17 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
         screenshotUrl: z.string().min(1).optional(),
       });
 
-      const patch = req.session?.isAdmin
-        ? insertUserWalletSchema.partial().parse(req.body)
-        : userPatchSchema.parse(req.body);
+      const role = getStaffRole(req);
+      const isAdminLike = role === "owner" || role === "admin" || Boolean(req.session?.isAdmin);
+      const isMod = role === "mod";
 
-      const data = req.session?.isAdmin ? patch : { ...patch, verified: false };
+      const patch = isAdminLike
+        ? insertUserWalletSchema.partial().parse(req.body)
+        : isMod
+          ? z.object({ verified: z.boolean() }).parse(req.body)
+          : userPatchSchema.parse(req.body);
+
+      const data = (isAdminLike || isMod) ? patch : { ...patch, verified: false };
       const wallet = await storage.updateUserWallet(id, data);
       if (!wallet) {
         return res.status(404).json({ error: "Wallet not found" });
@@ -1475,7 +2004,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
 
       // Audit verification toggles when performed by an admin
       if (req.session?.isAdmin && typeof (patch as any).verified === "boolean" && (patch as any).verified !== (existing as any).verified) {
-        auditAdmin(
+        auditAction(
           req,
           (patch as any).verified ? "user.wallet.verify" : "user.wallet.unverify",
           "user_wallet",
@@ -1548,7 +2077,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
   // ============ ADMIN USER MANAGEMENT ============
   
   // Get all users (admin only)
-  app.get("/api/admin/users", adminAuth, async (req: Request, res: Response) => {
+  app.get("/api/admin/users", staffAuth, async (req: Request, res: Response) => {
     try {
       const search = req.query.search as string | undefined;
       const users = search 
@@ -1561,7 +2090,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
   });
 
   // Get user full details (admin only)
-  app.get("/api/admin/users/:id", adminAuth, async (req: Request, res: Response) => {
+  app.get("/api/admin/users/:id", staffAuth, async (req: Request, res: Response) => {
     try {
       const id = req.params.id;
       const details = await storage.getUserFullDetails(id);
@@ -1574,7 +2103,11 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
         screenshotUrl: normalizeWalletProofUrl((w as any).screenshotUrl),
       }));
 
-      res.json({ ...details, wallets });
+      const role = getStaffRole(req);
+      const isAdminLike = role === "owner" || role === "admin" || Boolean(req.session?.isAdmin);
+      const safe = isAdminLike ? { ...details, wallets } : { ...details, wallets, payments: [], totalPayments: "0" };
+
+      res.json(safe);
     } catch (error) {
       res.status(500).json({ error: getErrorMessage(error, "Failed to fetch user details") });
     }
@@ -1583,7 +2116,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
   // Add payment for user (admin only)
 
   // Admin: pending verification queue (casino accounts + wallet proofs)
-  app.get("/api/admin/verifications", adminAuth, async (req: Request, res: Response) => {
+  app.get("/api/admin/verifications", staffAuth, async (req: Request, res: Response) => {
     try {
       const q = String((req.query as any)?.q || "").trim();
       const limit = Number((req.query as any)?.limit || 200);
@@ -1598,6 +2131,25 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
       return res.json({ ...data, wallets });
     } catch (error) {
       return res.status(500).json({ error: getErrorMessage(error, "Failed to load verifications") });
+    }
+  });
+
+
+  // Admin: set user role (user|mod|admin)
+  app.patch("/api/admin/users/:id/role", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const userId = req.params.id;
+      const schema = z.object({ role: z.enum(["user", "mod", "admin"]) });
+      const { role } = schema.parse(req.body);
+      const updated = await storage.updateUser(userId, {
+        role,
+        isAdmin: role === "admin",
+      } as any);
+
+      await auditAction(req, "user.role.update", "user", userId, { role });
+      res.json({ success: true, user: updated });
+    } catch (error) {
+      res.status(400).json({ error: getErrorMessage(error, "Failed to update role") });
     }
   });
 
@@ -1749,7 +2301,7 @@ app.get("/api/admin/stream-events", adminAuth, async (req: Request, res: Respons
       const data = insertStreamEventSchema.parse(req.body);
       const seed = crypto.randomBytes(16).toString("hex");
       const event = await storage.createStreamEvent({ ...data, seed });
-      auditAdmin(req, "stream_event.create", "stream_event", event.id, { title: event.title });
+      auditAction(req, "stream_event.create", "stream_event", event.id, { title: event.title });
       res.status(201).json(event);
     } catch (error) {
       if (error instanceof z.ZodError) {
@@ -1765,7 +2317,7 @@ app.get("/api/admin/stream-events", adminAuth, async (req: Request, res: Respons
       const id = parseInt(req.params.id);
       const data = insertStreamEventSchema.partial().parse(req.body);
       const event = await storage.updateStreamEvent(id, data);
-      if (event) { auditAdmin(req, "stream_event.update", "stream_event", id, { title: event.title }); }
+      if (event) { auditAction(req, "stream_event.update", "stream_event", id, { title: event.title }); }
       if (!event) {
         return res.status(404).json({ error: "Stream event not found" });
       }
