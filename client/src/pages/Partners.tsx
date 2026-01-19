@@ -1,7 +1,8 @@
 import { motion } from "framer-motion";
 import { useMemo, useState } from "react";
+import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Building2, ExternalLink, Search, Trophy, Gift, Loader2 } from "lucide-react";
+import { Building2, ExternalLink, Search, Trophy, Gift, ChevronRight } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Card } from "@/components/ui/card";
@@ -10,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { getQueryFn } from "@/lib/queryClient";
 import { normalizeExternalUrl } from "@/lib/url";
 import { useSeo } from "@/lib/seo";
+import { EmptyState } from "@/components/EmptyState";
+import { SkeletonGrid } from "@/components/SkeletonBlocks";
 
 type Casino = {
   id: number;
@@ -46,7 +49,7 @@ export default function Partners() {
     <div className="min-h-screen">
       <Navigation />
 
-      <div className="pt-28 pb-16">
+      <div className="pt-24 sm:pt-28 pb-16">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div
             className="text-center mb-10"
@@ -78,15 +81,13 @@ export default function Partners() {
           </div>
 
           {isLoading ? (
-            <div className="flex items-center justify-center py-14">
-              <Loader2 className="w-8 h-8 animate-spin text-neon-purple" />
-            </div>
+            <SkeletonGrid count={9} />
           ) : filtered.length === 0 ? (
-            <Card className="glass p-12 text-center">
-              <Building2 className="w-14 h-14 text-muted-foreground mx-auto mb-4" />
-              <h3 className="font-display text-xl text-white mb-2">No partners found</h3>
-              <p className="text-muted-foreground">Try a different search, or check back soon.</p>
-            </Card>
+            <EmptyState
+              icon={Building2}
+              title="No partners found"
+              description="Try a different search, or check back soon."
+            />
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filtered.map((c, i) => {
@@ -102,7 +103,7 @@ export default function Partners() {
                     <Card className="glass p-6">
                       <div className="flex items-center gap-3">
                         {c.logo ? (
-                          <img
+                          <img loading="lazy" decoding="async"
                             src={c.logo}
                             alt={`${c.name} logo`}
                             className="w-12 h-12 rounded-2xl object-cover bg-white/5"
@@ -113,7 +114,18 @@ export default function Partners() {
                           </div>
                         )}
                         <div className="min-w-0">
-                          <div className="text-white font-semibold text-lg truncate">{c.name}</div>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Link href={`/partners/${c.slug}`}>
+                              <span className="text-white font-semibold text-lg truncate hover:text-white/90 cursor-pointer">
+                                {c.name}
+                              </span>
+                            </Link>
+                            <Link href={`/partners/${c.slug}`}>
+                              <span className="text-white/50 hover:text-white cursor-pointer flex items-center" aria-label="View partner">
+                                <ChevronRight className="w-4 h-4" />
+                              </span>
+                            </Link>
+                          </div>
                           <div className="text-sm text-muted-foreground line-clamp-1">
                             {c.bonusText || c.welcomeBonus || "Exclusive bonuses available"}
                           </div>
@@ -121,24 +133,27 @@ export default function Partners() {
                       </div>
 
                       <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <Button variant="outline" asChild className="w-full">
+                        <Button variant="outline" size="pill" asChild className="w-full">
                           <a href={lbUrl}>
-                            <Trophy className="w-4 h-4 mr-2" /> Leaderboard
+                            <Trophy className="w-4 h-4" />
+                            <span>Leaderboard</span>
                           </a>
                         </Button>
-                        <Button variant="outline" asChild className="w-full">
+                        <Button variant="outline" size="pill" asChild className="w-full">
                           <a href="/giveaways">
-                            <Gift className="w-4 h-4 mr-2" /> Giveaways
+                            <Gift className="w-4 h-4" />
+                            <span>Giveaways</span>
                           </a>
                         </Button>
                         {playUrl ? (
-                          <Button asChild className="w-full">
+                          <Button asChild size="pill" className="w-full">
                             <a href={playUrl} target="_blank" rel="noreferrer noopener">
-                              Play <ExternalLink className="w-4 h-4 ml-2" />
+                              <span>Play</span>
+                              <ExternalLink className="w-4 h-4" />
                             </a>
                           </Button>
                         ) : (
-                          <Button className="w-full" disabled>
+                          <Button size="pill" className="w-full" disabled>
                             No link
                           </Button>
                         )}

@@ -7,6 +7,7 @@ import { getQueryFn } from "@/lib/queryClient";
 import { normalizeExternalUrl } from "@/lib/url";
 import { RecentWinnersMini } from "@/components/RecentWinnersMini";
 import { GiveawayRulesModal } from "@/components/GiveawayRulesModal";
+import { clearClientCacheAndReload } from "@/lib/clearClientCache";
 
 type SiteSettingRow = { key: string; value: string };
 type SiteSettingsMap = Record<string, string>;
@@ -65,12 +66,12 @@ export function Footer() {
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-6 text-sm">
                 <div className="space-y-2">
                   <div className="font-display text-white/80 uppercase tracking-wider text-xs">Site</div>
-                  <div className="space-y-1">
-                    <Link href="/giveaways"><span className="text-white/70 hover:text-white cursor-pointer">Giveaways</span></Link>
-                    <Link href="/winners"><span className="text-white/70 hover:text-white cursor-pointer">Winners</span></Link>
-                    <Link href="/partners"><span className="text-white/70 hover:text-white cursor-pointer">Partners</span></Link>
-                    <Link href="/leaderboard"><span className="text-white/70 hover:text-white cursor-pointer">Leaderboards</span></Link>
-                    <Link href="/stream-games"><span className="text-white/70 hover:text-white cursor-pointer">Stream Games</span></Link>
+                  <div className="flex flex-col gap-1">
+                    <Link href="/giveaways"><span className="block text-white/70 hover:text-white cursor-pointer">Giveaways</span></Link>
+                    <Link href="/winners"><span className="block text-white/70 hover:text-white cursor-pointer">Winners</span></Link>
+                    <Link href="/partners"><span className="block text-white/70 hover:text-white cursor-pointer">Partners</span></Link>
+                    <Link href="/leaderboard"><span className="block text-white/70 hover:text-white cursor-pointer">Leaderboards</span></Link>
+                    <Link href="/stream-games"><span className="block text-white/70 hover:text-white cursor-pointer">Stream Games</span></Link>
                     <div>
                       <GiveawayRulesModal
                         variant="ghost"
@@ -83,27 +84,27 @@ export function Footer() {
 
                 <div className="space-y-2">
                   <div className="font-display text-white/80 uppercase tracking-wider text-xs">Account</div>
-                  <div className="space-y-1">
-                    <Link href="/profile"><span className="text-white/70 hover:text-white cursor-pointer">Profile</span></Link>
-                    <Link href="/affiliates"><span className="text-white/70 hover:text-white cursor-pointer">Affiliates</span></Link>
+                  <div className="flex flex-col gap-1">
+                    <Link href="/profile"><span className="block text-white/70 hover:text-white cursor-pointer">Profile</span></Link>
+                    <Link href="/affiliates"><span className="block text-white/70 hover:text-white cursor-pointer">Affiliates</span></Link>
                   </div>
                 </div>
 
                 <div className="space-y-2">
                   <div className="font-display text-white/80 uppercase tracking-wider text-xs">Social</div>
-                  <div className="space-y-1">
+                  <div className="flex flex-col gap-1">
                     {kick && (
-                      <a className="inline-flex items-center gap-2 text-white/70 hover:text-white" href={kick} target="_blank" rel="noopener noreferrer">
+                      <a className="flex items-center gap-2 text-white/70 hover:text-white" href={kick} target="_blank" rel="noopener noreferrer">
                         Kick <ExternalLink className="h-4 w-4 opacity-70" />
                       </a>
                     )}
                     {discord && (
-                      <a className="inline-flex items-center gap-2 text-white/70 hover:text-white" href={discord} target="_blank" rel="noopener noreferrer">
+                      <a className="flex items-center gap-2 text-white/70 hover:text-white" href={discord} target="_blank" rel="noopener noreferrer">
                         Discord <ExternalLink className="h-4 w-4 opacity-70" />
                       </a>
                     )}
                     {x && (
-                      <a className="inline-flex items-center gap-2 text-white/70 hover:text-white" href={x} target="_blank" rel="noopener noreferrer">
+                      <a className="flex items-center gap-2 text-white/70 hover:text-white" href={x} target="_blank" rel="noopener noreferrer">
                         X <ExternalLink className="h-4 w-4 opacity-70" />
                       </a>
                     )}
@@ -123,7 +124,16 @@ export function Footer() {
               <div className="mt-2">
                 Partner links may be affiliate links. By using them you may support the stream at no extra cost.
               </div>
-              <div className="mt-4 text-white/40">© {new Date().getFullYear()} GETSOME</div>
+              <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-white/40">
+                <div>© {new Date().getFullYear()} GETSOME</div>
+                <button
+                  type="button"
+                  className="text-white/40 hover:text-white underline underline-offset-4 w-fit"
+                  onClick={() => void clearClientCacheAndReload()}
+                >
+                  Clear cache & reload
+                </button>
+              </div>
             </div>
           </Card>
         </motion.div>

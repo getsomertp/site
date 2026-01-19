@@ -10,6 +10,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { getQueryFn } from "@/lib/queryClient";
 import { GiveawayRulesModal } from "@/components/GiveawayRulesModal";
+import { EmptyState } from "@/components/EmptyState";
+import { SkeletonList } from "@/components/SkeletonBlocks";
+import { ProvablyFairModal } from "@/components/ProvablyFairModal";
 
 type WinnerSummary = {
   id: string;
@@ -61,7 +64,7 @@ export default function Winners() {
     <div className="min-h-screen">
       <Navigation />
 
-      <div className="pt-28 pb-24">
+      <div className="pt-24 sm:pt-28 pb-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div
             className="text-center mb-10"
@@ -89,15 +92,13 @@ export default function Winners() {
           </motion.div>
 
           {isLoading ? (
-            <Card className="glass p-10 text-center">
-              <div className="text-white/70">Loading winners…</div>
-            </Card>
+            <SkeletonList count={6} />
           ) : sorted.length === 0 ? (
-            <Card className="glass p-12 text-center">
-              <Sparkles className="w-14 h-14 text-muted-foreground mx-auto mb-4" />
-              <h3 className="font-display text-xl text-white mb-2">No winners yet</h3>
-              <p className="text-muted-foreground">Winners will appear here after a giveaway ends and a winner is selected.</p>
-            </Card>
+            <EmptyState
+              icon={Sparkles}
+              title="No winners yet"
+              description="Winners will appear here after a giveaway ends and a winner is selected."
+            />
           ) : (
             <div className="space-y-4">
               {sorted.map((w, idx) => {
@@ -117,7 +118,7 @@ export default function Winners() {
                       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                         <div className="flex items-center gap-4 min-w-0">
                           {avatar ? (
-                            <img
+                            <img loading="lazy" decoding="async"
                               src={avatar}
                               alt=""
                               className="w-12 h-12 rounded-full border border-white/10"
@@ -138,7 +139,7 @@ export default function Winners() {
                           </div>
                         </div>
 
-                        <div className="flex items-center justify-between md:justify-end gap-4">
+                        <div className="flex flex-wrap items-center justify-between md:justify-end gap-4">
                           <div className="text-right">
                             <div className="font-display font-bold text-neon-gold text-lg">{w.prize}</div>
                             <div className="text-xs text-white/55">Ended {ended.toLocaleDateString()}</div>
@@ -147,13 +148,15 @@ export default function Winners() {
                           {casinoName ? (
                             <div className="flex items-center gap-2">
                               {casinoLogo ? (
-                                <img src={casinoLogo} alt="" className="w-7 h-7 rounded-md border border-white/10" />
+                                <img loading="lazy" decoding="async" src={casinoLogo} alt="" className="w-7 h-7 rounded-md border border-white/10" />
                               ) : (
                                 <div className="w-7 h-7 rounded-md bg-white/10 border border-white/10" />
                               )}
                               <span className="text-sm text-white/70">{casinoName}</span>
                             </div>
                           ) : null}
+
+                          <ProvablyFairModal giveawayId={w.id} />
                         </div>
                       </div>
                     </Card>
