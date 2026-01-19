@@ -363,6 +363,16 @@ const [auditSearch, setAuditSearch] = useState("");
   const [themeAccent, setThemeAccent] = useState("#b026ff");
   const [uploadingThemeBg, setUploadingThemeBg] = useState(false);
 
+  // Homepage stats
+  const [statsCommunityMode, setStatsCommunityMode] = useState<"users" | "discord" | "manual">("users");
+  const [statsDiscordGuildId, setStatsDiscordGuildId] = useState("");
+  const [statsCommunityManual, setStatsCommunityManual] = useState(0);
+  const [statsCommunityExtra, setStatsCommunityExtra] = useState(0);
+  const [statsGivenAwayExtra, setStatsGivenAwayExtra] = useState(0);
+  const [statsWinnersExtra, setStatsWinnersExtra] = useState(0);
+  const [statsLiveHoursManual, setStatsLiveHoursManual] = useState(0);
+  const [statsSnapshot, setStatsSnapshot] = useState<any | null>(null);
+
   // Leaderboards
   const [leaderboardDialogOpen, setLeaderboardDialogOpen] = useState(false);
   const [editingLeaderboard, setEditingLeaderboard] = useState<any | null>(null);
@@ -404,6 +414,12 @@ const [auditSearch, setAuditSearch] = useState("");
     enabled: isAdminLike === true,
   });
 
+  const { data: siteStatsAdmin, isLoading: loadingSiteStats } = useQuery<any>({
+    queryKey: ["/api/admin/site/stats"],
+    queryFn: () => adminFetch("/api/admin/site/stats"),
+    enabled: isAdminLike === true,
+  });
+
 // Admin audit log
 const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAuditLog[]>({
   queryKey: ["/api/admin/audit", auditSearch],
@@ -430,6 +446,19 @@ const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAudi
     }
     if (siteSettings?.themeAccent) setThemeAccent(siteSettings.themeAccent);
   }, [siteSettings]);
+
+  useEffect(() => {
+    const cfg = siteStatsAdmin?.config;
+    if (!cfg) return;
+    setStatsCommunityMode((cfg.communityMode || "users") as any);
+    setStatsDiscordGuildId(String(cfg.discordGuildId || ""));
+    setStatsCommunityManual(Number(cfg.communityManual || 0));
+    setStatsCommunityExtra(Number(cfg.communityExtra || 0));
+    setStatsGivenAwayExtra(Number(cfg.givenAwayExtra || 0));
+    setStatsWinnersExtra(Number(cfg.winnersExtra || 0));
+    setStatsLiveHoursManual(Number(cfg.liveHoursManual || 0));
+    setStatsSnapshot(siteStatsAdmin?.stats || null);
+  }, [siteStatsAdmin]);
 
   // Leaderboards
   const { data: leaderboards = [], isLoading: loadingLeaderboards } = useQuery<any[]>({
@@ -568,6 +597,32 @@ const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAudi
       toast({ title: "Site settings saved" });
     },
     onError: (err: any) => toast({ title: "Failed to save site settings", description: err?.message || "Request failed", variant: "destructive" }),
+  });
+
+  const saveSiteStats = useMutation({
+    mutationFn: async () => {
+      const payload = {
+        communityMode: statsCommunityMode,
+        discordGuildId: statsDiscordGuildId,
+        communityManual: Number(statsCommunityManual || 0),
+        communityExtra: Number(statsCommunityExtra || 0),
+        givenAwayExtra: Number(statsGivenAwayExtra || 0),
+        winnersExtra: Number(statsWinnersExtra || 0),
+        liveHoursManual: Number(statsLiveHoursManual || 0),
+      };
+      return adminFetch("/api/admin/site/stats", {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+    },
+    onSuccess: (data: any) => {
+      setStatsSnapshot(data?.stats || null);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/site/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/site/stats"] });
+      toast({ title: "Stats saved" });
+    },
+    onError: (err: any) =>
+      toast({ title: "Failed to save stats", description: err?.message || "Request failed", variant: "destructive" }),
   });
 
   // Leaderboard mutations
@@ -2231,6 +2286,139 @@ const deleteLeaderboard = useMutation({
                         <p className="text-xs text-muted-foreground">Controls primary buttons, focus rings, and glow accents.</p>
                       </div>
                     </div>
+                  </div>
+                </div>
+
+                <div className="mt-8 pt-6 border-t border-white/10">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-2">
+                    <h3 className="font-display text-xl text-white">Homepage Stats</h3>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/admin/site/stats"] })}
+                      disabled={loadingSiteStats}
+                    >
+                      Refresh
+                    </Button>
+                  </div>
+                  <p className="text-muted-foreground mb-6">
+                    These counters auto-sync from real data (users, giveaway winners, payment totals) with optional manual adjustments.
+                  </p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Community source</Label>
+                        <Select value={statsCommunityMode} onValueChange={(v) => setStatsCommunityMode(v as any)}>
+                          <SelectTrigger className="bg-white/5">
+                            <SelectValue placeholder="Select source" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="users">Registered users (auto)</SelectItem>
+                            <SelectItem value="discord">Discord server (auto)</SelectItem>
+                            <SelectItem value="manual">Manual</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Discord sync requires setting <span className="font-mono">DISCORD_BOT_TOKEN</span> in Railway.
+                        </p>
+                      </div>
+
+                      {statsCommunityMode === "discord" ? (
+                        <div className="space-y-2">
+                          <Label>Discord Guild ID</Label>
+                          <Input value={statsDiscordGuildId} onChange={(e) => setStatsDiscordGuildId(e.target.value)} placeholder="123456789012345678" />
+                        </div>
+                      ) : null}
+
+                      {statsCommunityMode === "manual" ? (
+                        <div className="space-y-2">
+                          <Label>Community (manual total)</Label>
+                          <Input type="number" value={String(statsCommunityManual)} onChange={(e) => setStatsCommunityManual(Number(e.target.value || 0))} />
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <Label>Community (manual adjustment)</Label>
+                          <Input type="number" value={String(statsCommunityExtra)} onChange={(e) => setStatsCommunityExtra(Number(e.target.value || 0))} />
+                          <p className="text-xs text-muted-foreground">Adds on top of the auto base.</p>
+                        </div>
+                      )}
+
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                        {loadingSiteStats ? (
+                          <div className="text-sm text-muted-foreground">Loading...</div>
+                        ) : (
+                          <div className="text-sm">
+                            <div className="flex items-center justify-between">
+                              <span className="text-muted-foreground">Community (current)</span>
+                              <span className="font-medium text-white">
+                                {Number(statsSnapshot?.community ?? statsSnapshot?.meta?.community?.total ?? 0).toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              Source: {statsSnapshot?.meta?.community?.source || "-"}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Given Away (manual extra)</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={String(statsGivenAwayExtra)}
+                          onChange={(e) => setStatsGivenAwayExtra(Number(e.target.value || 0))}
+                        />
+                        <p className="text-xs text-muted-foreground">Adds on top of payment totals tracked in Admin → Payments.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Winners (manual extra)</Label>
+                        <Input type="number" value={String(statsWinnersExtra)} onChange={(e) => setStatsWinnersExtra(Number(e.target.value || 0))} />
+                        <p className="text-xs text-muted-foreground">Adds on top of giveaway winners.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Live Hours (manual total)</Label>
+                        <Input type="number" value={String(statsLiveHoursManual)} onChange={(e) => setStatsLiveHoursManual(Number(e.target.value || 0))} />
+                      </div>
+
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                        {loadingSiteStats ? (
+                          <div className="text-sm text-muted-foreground">Loading...</div>
+                        ) : (
+                          <div className="grid grid-cols-3 gap-3 text-sm">
+                            <div>
+                              <div className="text-muted-foreground">Given Away</div>
+                              <div className="font-medium text-white">${Number(statsSnapshot?.meta?.givenAway?.total ?? 0).toLocaleString()}</div>
+                            </div>
+                            <div>
+                              <div className="text-muted-foreground">Winners</div>
+                              <div className="font-medium text-white">{Number(statsSnapshot?.meta?.winners?.total ?? 0).toLocaleString()}</div>
+                            </div>
+                            <div>
+                              <div className="text-muted-foreground">Live Hours</div>
+                              <div className="font-medium text-white">{Number(statsSnapshot?.liveHours ?? statsSnapshot?.meta?.liveHours?.manual ?? 0).toLocaleString()}</div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end mt-6">
+                    <Button
+                      type="button"
+                      className="font-display bg-neon-cyan text-black"
+                      onClick={() => saveSiteStats.mutate()}
+                      disabled={saveSiteStats.isPending}
+                    >
+                      Save Stats
+                    </Button>
                   </div>
                 </div>
 

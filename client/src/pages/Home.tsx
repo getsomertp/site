@@ -165,6 +165,11 @@ export default function Home() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
+  const { data: siteStats, isLoading: statsLoading } = useQuery<any>({
+    queryKey: ["/api/site/stats"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+  });
+
   // Guard against null (e.g., if a proxy/auth layer returns 401).
   const siteSettings = (siteSettingsRaw as any) || {};
 
@@ -190,10 +195,10 @@ export default function Home() {
     path: "/",
   });
 
-  const communityMembers = Number(siteSettings.communityMembers || 0);
-  const totalGivenAway = Number(siteSettings.totalGivenAway || 0);
-  const totalWinners = Number(siteSettings.totalWinners || 0);
-  const liveHours = Number(siteSettings.liveHours || 0);
+  const communityMembers = Number(siteStats?.community || 0);
+  const totalGivenAway = Number(siteStats?.givenAway || 0);
+  const totalWinners = Number(siteStats?.winners || 0);
+  const liveHours = Number(siteStats?.liveHours || 0);
 
   const hasLeaderboard = Boolean(homeLb && (homeLb.casino || (homeLb as any)?.casino));
   const lbCasino = (homeLb as any)?.casino;
@@ -250,7 +255,7 @@ export default function Home() {
                 <Users className="w-5 h-5" />
                 <div>
                   <div className="text-sm text-muted-foreground">Community</div>
-                  {settingsLoading ? (
+                  {statsLoading ? (
                     <Skeleton className="h-7 w-20" />
                   ) : (
                     <div className="text-2xl font-bold">{communityMembers.toLocaleString()}</div>
@@ -263,7 +268,7 @@ export default function Home() {
                 <Gift className="w-5 h-5" />
                 <div>
                   <div className="text-sm text-muted-foreground">Given Away</div>
-                  {settingsLoading ? (
+                  {statsLoading ? (
                     <Skeleton className="h-7 w-24" />
                   ) : (
                     <div className="text-2xl font-bold">{formatMoney(totalGivenAway)}</div>
@@ -276,7 +281,7 @@ export default function Home() {
                 <Trophy className="w-5 h-5" />
                 <div>
                   <div className="text-sm text-muted-foreground">Winners</div>
-                  {settingsLoading ? (
+                  {statsLoading ? (
                     <Skeleton className="h-7 w-16" />
                   ) : (
                     <div className="text-2xl font-bold">{totalWinners.toLocaleString()}</div>
@@ -289,7 +294,7 @@ export default function Home() {
                 <Zap className="w-5 h-5" />
                 <div>
                   <div className="text-sm text-muted-foreground">Live Hours</div>
-                  {settingsLoading ? (
+                  {statsLoading ? (
                     <Skeleton className="h-7 w-14" />
                   ) : (
                     <div className="text-2xl font-bold">{liveHours.toLocaleString()}</div>
