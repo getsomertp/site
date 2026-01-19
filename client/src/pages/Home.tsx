@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
 import { Trophy, Gift, Users, Zap, ExternalLink, Building2, Crown } from "lucide-react";
@@ -14,6 +15,7 @@ import { normalizeExternalUrl } from "@/lib/url";
 import { useSession } from "@/hooks/useSession";
 import { useToast } from "@/hooks/use-toast";
 import { useSeo } from "@/lib/seo";
+import { useCountUp } from "@/hooks/useCountUp";
 import type { Giveaway, GiveawayRequirement } from "@shared/schema";
 
 type Casino = {
@@ -170,6 +172,17 @@ export default function Home() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
+  // Start the count-up animation once when stats load.
+  const didAnimateStats = useRef(false);
+  const [animateStats, setAnimateStats] = useState(false);
+  useEffect(() => {
+    if (didAnimateStats.current) return;
+    if (!statsLoading && siteStats) {
+      didAnimateStats.current = true;
+      setAnimateStats(true);
+    }
+  }, [statsLoading, siteStats]);
+
   // Guard against null (e.g., if a proxy/auth layer returns 401).
   const siteSettings = (siteSettingsRaw as any) || {};
 
@@ -199,6 +212,22 @@ export default function Home() {
   const totalGivenAway = Number(siteStats?.givenAway || 0);
   const totalWinners = Number(siteStats?.winners || 0);
   const liveHours = Number(siteStats?.liveHours || 0);
+
+  // Count-up effect for stats (runs once after stats load)
+  const didAnimateStats = useRef(false);
+  const [animateStats, setAnimateStats] = useState(false);
+  useEffect(() => {
+    if (didAnimateStats.current) return;
+    if (!statsLoading) {
+      didAnimateStats.current = true;
+      setAnimateStats(true);
+    }
+  }, [statsLoading]);
+
+  const communityAnim = useCountUp(communityMembers, { start: animateStats, durationMs: 1200 });
+  const givenAwayAnim = useCountUp(totalGivenAway, { start: animateStats, durationMs: 1300 });
+  const winnersAnim = useCountUp(totalWinners, { start: animateStats, durationMs: 1200 });
+  const liveHoursAnim = useCountUp(liveHours, { start: animateStats, durationMs: 1200 });
 
   const hasLeaderboard = Boolean(homeLb && (homeLb.casino || (homeLb as any)?.casino));
   const lbCasino = (homeLb as any)?.casino;
@@ -258,7 +287,7 @@ export default function Home() {
                   {statsLoading ? (
                     <Skeleton className="h-7 w-20" />
                   ) : (
-                    <div className="text-2xl font-bold">{communityMembers.toLocaleString()}+</div>
+                    <div className="text-2xl font-bold tabular-nums">{communityAnim.toLocaleString()}+</div>
                   )}
                 </div>
               </div>
@@ -271,7 +300,7 @@ export default function Home() {
                   {statsLoading ? (
                     <Skeleton className="h-7 w-24" />
                   ) : (
-                    <div className="text-2xl font-bold">{formatMoney(totalGivenAway)}+</div>
+                    <div className="text-2xl font-bold tabular-nums">{formatMoney(givenAwayAnim)}+</div>
                   )}
                 </div>
               </div>
@@ -284,7 +313,7 @@ export default function Home() {
                   {statsLoading ? (
                     <Skeleton className="h-7 w-16" />
                   ) : (
-                    <div className="text-2xl font-bold">{totalWinners.toLocaleString()}+</div>
+                    <div className="text-2xl font-bold tabular-nums">{winnersAnim.toLocaleString()}+</div>
                   )}
                 </div>
               </div>
@@ -297,7 +326,7 @@ export default function Home() {
                   {statsLoading ? (
                     <Skeleton className="h-7 w-14" />
                   ) : (
-                    <div className="text-2xl font-bold">{liveHours.toLocaleString()}+</div>
+                    <div className="text-2xl font-bold tabular-nums">{liveHoursAnim.toLocaleString()}+</div>
                   )}
                 </div>
               </div>
