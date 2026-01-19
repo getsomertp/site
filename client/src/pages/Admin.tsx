@@ -355,6 +355,7 @@ const [auditSearch, setAuditSearch] = useState("");
   const [siteDiscordUrl, setSiteDiscordUrl] = useState("https://discord.gg/");
   const [siteBrandName, setSiteBrandName] = useState("GETSOME");
   const [siteBrandLogoUrl, setSiteBrandLogoUrl] = useState("");
+  const [sitePartnerEmail, setSitePartnerEmail] = useState("");
   const [uploadingSiteLogo, setUploadingSiteLogo] = useState(false);
 
   // Theme
@@ -433,6 +434,7 @@ const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAudi
     if (siteSettings?.discordUrl) setSiteDiscordUrl(siteSettings.discordUrl);
     if (siteSettings?.brandName) setSiteBrandName(siteSettings.brandName);
     if (siteSettings?.brandLogoUrl) setSiteBrandLogoUrl(siteSettings.brandLogoUrl);
+    if (siteSettings?.partnerEmail !== undefined) setSitePartnerEmail(siteSettings.partnerEmail || "");
 
     if (siteSettings?.themeBackgroundUrl !== undefined) {
       setThemeBgUrl(siteSettings.themeBackgroundUrl || "");
@@ -575,6 +577,10 @@ const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAudi
       await adminFetch("/api/admin/site/settings", {
         method: "POST",
         body: JSON.stringify({ key: "discordUrl", value: siteDiscordUrl }),
+      });
+      await adminFetch("/api/admin/site/settings", {
+        method: "POST",
+        body: JSON.stringify({ key: "partnerEmail", value: (sitePartnerEmail || "").trim() }),
       });
 
       await adminFetch("/api/admin/site/settings", {
@@ -2211,6 +2217,14 @@ const deleteLeaderboard = useMutation({
                   </div>
                 </div>
 
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Partner Contact Email</Label>
+                    <Input type="email" value={sitePartnerEmail} onChange={(e) => setSitePartnerEmail(e.target.value)} placeholder="partners@yourdomain.com" />
+                    <p className="text-xs text-muted-foreground">Used by the "Become a Partner" button.</p>
+                  </div>
+                </div>
+
                 <div className="mt-8 pt-6 border-t border-white/10">
                   <h3 className="font-display text-xl text-white mb-2">Theme</h3>
                   <p className="text-muted-foreground mb-6">Background + accents (applies site-wide).</p>
@@ -2287,6 +2301,15 @@ const deleteLeaderboard = useMutation({
                       </div>
                     </div>
                   </div>
+
+
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Partner Contact Email</Label>
+                    <Input type="email" value={sitePartnerEmail} onChange={(e) => setSitePartnerEmail(e.target.value)} placeholder="partners@yourdomain.com" />
+                    <p className="text-xs text-muted-foreground">Used by the "Become a Partner" button.</p>
+                  </div>
+                </div>
                 </div>
 
                 <div className="mt-8 pt-6 border-t border-white/10">
@@ -2420,6 +2443,15 @@ const deleteLeaderboard = useMutation({
                       Save Stats
                     </Button>
                   </div>
+
+
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Partner Contact Email</Label>
+                    <Input type="email" value={sitePartnerEmail} onChange={(e) => setSitePartnerEmail(e.target.value)} placeholder="partners@yourdomain.com" />
+                    <p className="text-xs text-muted-foreground">Used by the "Become a Partner" button.</p>
+                  </div>
+                </div>
                 </div>
 
                 <div className="mt-8 pt-6 border-t border-white/10">

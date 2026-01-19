@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { Users, ExternalLink, Star, Percent, Gift, Shield, Zap } from "lucide-react";
+import { Users, ExternalLink, Star, Percent, Gift, Shield, Zap, Mail } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -73,6 +73,16 @@ export default function Affiliates() {
   const { data: casinos = [], isLoading } = useQuery<Casino[]>({
     queryKey: ["/api/casinos"],
   });
+
+  const { data: siteSettings = {} } = useQuery<Record<string, string>>({
+    queryKey: ["/api/site/settings"],
+  });
+
+  const brandName = String((siteSettings as any)?.brandName || "GETSOME");
+  const partnerEmail = String((siteSettings as any)?.partnerEmail || "").trim();
+  const partnerMailto = partnerEmail
+    ? `mailto:${partnerEmail}?subject=${encodeURIComponent(`Partnership Inquiry - ${brandName}`)}`
+    : "";
 
   const copyCode = (code: string, name: string) => {
     navigator.clipboard.writeText(code);
@@ -248,13 +258,27 @@ export default function Affiliates() {
                 Are you a casino or gambling platform looking to reach our engaged audience? 
                 We're always looking for quality partners to bring exclusive deals to our community.
               </p>
-              <Button 
-                size="lg" 
-                className="font-display bg-gradient-to-r from-neon-purple to-neon-gold hover:opacity-90"
-                data-testid="button-become-partner"
-              >
-                Become a Partner
-              </Button>
+              {partnerMailto ? (
+                <Button
+                  asChild
+                  size="lg"
+                  className="font-display rounded-full min-h-12 px-10 text-base bg-gradient-to-r from-neon-purple via-neon-pink to-neon-gold text-white shadow-lg shadow-neon-purple/25 hover:shadow-xl hover:shadow-neon-gold/25 hover:opacity-95"
+                  data-testid="button-become-partner"
+                >
+                  <a href={partnerMailto}>
+                    Become a Partner <Mail className="ml-2 w-4 h-4" />
+                  </a>
+                </Button>
+              ) : (
+                <Button
+                  size="lg"
+                  disabled
+                  className="font-display rounded-full min-h-12 px-10 text-base bg-gradient-to-r from-neon-purple via-neon-pink to-neon-gold text-white opacity-60"
+                  data-testid="button-become-partner"
+                >
+                  Become a Partner
+                </Button>
+              )}
             </Card>
           </motion.div>
 
