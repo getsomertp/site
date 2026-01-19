@@ -590,11 +590,10 @@ export default function Home() {
 
       <div className="mt-6">
         {casinosLoading ? (
-          <SkeletonGrid count={6} />
+          <SkeletonGrid count={8} />
         ) : showNoCasinos ? (
           <EmptyState icon={Building2} title={casinosEmptyTitle} description={casinosEmptyText} />
         ) : (
-          {/* Use 2-up layout on desktop so the section feels denser and avoids awkward last-row gaps. */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {activeCasinos.slice(0, 8).map((c) => (
               <Card key={c.id} className="glass p-6">
