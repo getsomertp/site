@@ -213,17 +213,6 @@ export default function Home() {
   const totalWinners = Number(siteStats?.winners || 0);
   const liveHours = Number(siteStats?.liveHours || 0);
 
-  // Count-up effect for stats (runs once after stats load)
-  const didAnimateStats = useRef(false);
-  const [animateStats, setAnimateStats] = useState(false);
-  useEffect(() => {
-    if (didAnimateStats.current) return;
-    if (!statsLoading) {
-      didAnimateStats.current = true;
-      setAnimateStats(true);
-    }
-  }, [statsLoading]);
-
   const communityAnim = useCountUp(communityMembers, { start: animateStats, durationMs: 1200 });
   const givenAwayAnim = useCountUp(totalGivenAway, { start: animateStats, durationMs: 1300 });
   const winnersAnim = useCountUp(totalWinners, { start: animateStats, durationMs: 1200 });
