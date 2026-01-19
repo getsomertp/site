@@ -578,7 +578,7 @@ export default function Home() {
 
   const casinosBlock = (
     // Pull this section upward a bit so it visually fills the area beneath the onboarding block.
-    <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-0 -mt-8 sm:-mt-10 pb-12">
+    <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-0 -mt-8 sm:-mt-10 lg:-mt-24 pb-12">
       <div className="flex items-end justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-white">{casinosTitle}</h2>
@@ -591,13 +591,13 @@ export default function Home() {
 
       <div className="mt-6">
         {casinosLoading ? (
-          <SkeletonGrid count={8} />
+          <SkeletonGrid count={6} />
         ) : showNoCasinos ? (
           <EmptyState icon={Building2} title={casinosEmptyTitle} description={casinosEmptyText} />
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {activeCasinos.slice(0, 8).map((c) => (
-              <Card key={c.id} className="glass p-6">
+          <div className="grid grid-cols-1 gap-3">
+            {activeCasinos.slice(0, 6).map((c) => (
+              <Card key={c.id} className="glass p-5">
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     {c.logo ? (
@@ -622,13 +622,13 @@ export default function Home() {
                   </div>
 
                   {c.affiliateLink ? (
-                    <Button asChild size="sm">
+                    <Button asChild size="pill" className="h-9 px-4">
                       <a href={normalizeExternalUrl(c.affiliateLink)} target="_blank" rel="noreferrer noopener">
                         Play
                       </a>
                     </Button>
                   ) : (
-                    <Button size="sm" variant="outline" disabled>
+                    <Button size="pill" variant="outline" disabled className="h-9 px-4">
                       No link
                     </Button>
                   )}
