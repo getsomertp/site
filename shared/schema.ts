@@ -202,6 +202,31 @@ export const siteSettings = pgTable("site_settings", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// Site stats (homepage counters).
+// These are primarily computed from real data, with optional manual tweaks.
+// For community, we support: users (registered users), discord (server count), or manual.
+export const siteStats = pgTable("site_stats", {
+  id: serial("id").primaryKey(),
+
+  // users | discord | manual
+  communityMode: text("community_mode").notNull().default("users"),
+  discordGuildId: text("discord_guild_id"),
+
+  // If communityMode === 'manual', this is the displayed community count.
+  communityManual: integer("community_manual").notNull().default(0),
+  // If communityMode !== 'manual', this is added to the computed base.
+  communityExtra: integer("community_extra").notNull().default(0),
+
+  // Added on top of computed totals
+  givenAwayExtra: numeric("given_away_extra", { precision: 12, scale: 2 }).notNull().default("0"),
+  winnersExtra: integer("winners_extra").notNull().default(0),
+
+  // No reliable automatic source yet; keep as admin-managed.
+  liveHoursManual: integer("live_hours_manual").notNull().default(0),
+
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
 // Partner Leaderboards (configured per-casino and fetched server-side)
 // Mapping is stored as JSON string for maximum flexibility.
 export const leaderboards = pgTable("leaderboards", {
@@ -330,6 +355,7 @@ export const insertStreamEventEntrySchema = createInsertSchema(streamEventEntrie
 export const insertTournamentBracketSchema = createInsertSchema(tournamentBrackets).omit({ id: true, createdAt: true });
 
 export const insertSiteSettingSchema = createInsertSchema(siteSettings).omit({ id: true, updatedAt: true });
+export const insertSiteStatsSchema = createInsertSchema(siteStats).omit({ id: true, updatedAt: true });
 export const insertAdminAuditLogSchema = createInsertSchema(adminAuditLogs).omit({ id: true, createdAt: true });
 
 export const insertLeaderboardSchema = createInsertSchema(leaderboards).omit({ id: true, createdAt: true, lastFetchedAt: true }).extend({
@@ -366,6 +392,9 @@ export type InsertTournamentBracket = z.infer<typeof insertTournamentBracketSche
 
 export type SiteSetting = typeof siteSettings.$inferSelect;
 export type InsertSiteSetting = z.infer<typeof insertSiteSettingSchema>;
+
+export type SiteStats = typeof siteStats.$inferSelect;
+export type InsertSiteStats = z.infer<typeof insertSiteStatsSchema>;
 
 export type AdminAuditLog = typeof adminAuditLogs.$inferSelect;
 export type InsertAdminAuditLog = z.infer<typeof insertAdminAuditLogSchema>;

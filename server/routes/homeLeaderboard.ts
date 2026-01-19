@@ -7,6 +7,7 @@ const router = Router();
 
 router.get("/leaderboard", async (_req, res) => {
   try {
+    res.setHeader("Cache-Control", "public, max-age=15, stale-while-revalidate=120");
     const period = "monthly";
 
     const result = await db.execute(sql`

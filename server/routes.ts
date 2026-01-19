@@ -5,6 +5,7 @@ import homeLeaderboardRouter from "./routes/homeLeaderboard";
 import passport from "passport";
 import rateLimit from "express-rate-limit";
 import crypto from "crypto";
+import { clearStatsCache, getAdminStats, getPublicStats } from "./stats";
 import { 
   insertCasinoSchema, 
   insertGiveawaySchema,
@@ -47,6 +48,12 @@ function normalizeBool(v: unknown, fallback: boolean): boolean {
 
 function sha256Hex(input: string): string {
   return crypto.createHash("sha256").update(String(input)).digest("hex");
+}
+
+
+function setPublicCache(res: Response, seconds: number, swrSeconds?: number) {
+  const swr = swrSeconds ?? Math.max(30, seconds * 10);
+  res.setHeader("Cache-Control", `public, max-age=${seconds}, stale-while-revalidate=${swr}`);
 }
 
 // Hide server-side provably-fair secret seed from all API responses.
@@ -431,8 +438,10 @@ app.get("/api/public/files/:key(*)", async (req: Request, res: Response) => {
     const key = decodeURIComponent(rawKey).replace(/\\/g, "/");
     if (!key || key.includes("..")) return res.status(400).json({ error: "Bad key" });
 
-    // Public assets only (casino logos). Everything else should use an auth-gated route.
-    if (!key.startsWith("casinos/")) {
+    // Public assets only. Everything else should use an auth-gated route.
+    // - casinos/: partner logos
+    // - site/: header logo + background theme image
+    if (!(key.startsWith("casinos/") || key.startsWith("site/"))) {
       return res.status(404).json({ error: "Not found" });
     }
 
@@ -628,6 +637,57 @@ app.post("/api/admin/uploads/site-logo", adminAuth, upload.single("logo"), async
     return res.status(500).json({ error: err?.message || "Failed to upload logo" });
   }
 });
+
+// Admin: upload site background image (S3/R2 if configured, else local)
+app.post(
+  "/api/admin/uploads/site-background",
+  adminAuth,
+  upload.single("background"),
+  async (req: Request, res: Response) => {
+    try {
+      const file = (req as any).file as Express.Multer.File | undefined;
+      if (!file) return res.status(400).json({ error: "No file uploaded" });
+
+      const ext = (file.originalname.split(".").pop() || "webp")
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "");
+      const key = `site/background/${Date.now()}-${crypto.randomBytes(6).toString("hex")}.${ext}`;
+      auditAction(req, "site.background.upload", "file", key, { mimetype: file.mimetype, size: file.size });
+
+      const bucket = getObjectStorageConfig().bucket;
+      const client = s3Client();
+
+      if (client && bucket) {
+        await client.send(
+          new PutObjectCommand({
+            Bucket: bucket,
+            Key: key,
+            Body: file.buffer,
+            ContentType: file.mimetype || "application/octet-stream",
+            CacheControl: "public, max-age=31536000, immutable",
+          }),
+        );
+
+        const publicUrl = getPublicUrl(key);
+        if (!publicUrl) {
+          return res.status(500).json({
+            error:
+              "Uploaded, but no public URL can be formed. Set S3_PUBLIC_BASE_URL or enable S3_USE_PROXY.",
+          });
+        }
+        return res.json({ url: publicUrl, key });
+      }
+
+      // Fallback: local filesystem
+      const localName = key.replace(/\//g, "_");
+      const outPath = path.join(uploadsDir, localName);
+      fs.writeFileSync(outPath, file.buffer);
+      return res.json({ url: `/uploads/${localName}` });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message || "Failed to upload background" });
+    }
+  },
+);
 
 
 
@@ -835,10 +895,27 @@ app.get("/api/auth/me", async (req: Request, res: Response) => {
   // Get all active casinos
   app.get("/api/casinos", async (req: Request, res: Response) => {
     try {
+      setPublicCache(res, 60);
       const casinos = await storage.getCasinos();
       res.json(casinos);
     } catch (error) {
       res.status(500).json({ error: getErrorMessage(error, "Failed to fetch casinos") });
+    }
+  });
+
+  // Get single casino by slug (public)
+  app.get("/api/casinos/slug/:slug", async (req: Request, res: Response) => {
+    try {
+      setPublicCache(res, 60);
+      const slug = String(req.params.slug || "").trim();
+      if (!slug) return res.status(400).json({ error: "Missing slug" });
+      const casino = await storage.getCasinoBySlug(slug);
+      if (!casino || casino.isActive === false) {
+        return res.status(404).json({ error: "Casino not found" });
+      }
+      return res.json(casino);
+    } catch (error) {
+      return res.status(500).json({ error: getErrorMessage(error, "Failed to fetch casino") });
     }
   });
 
@@ -858,6 +935,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
   // Get single casino
   app.get("/api/casinos/:id", async (req: Request, res: Response) => {
     try {
+      setPublicCache(res, 60);
       const id = parseInt(req.params.id);
       const casino = await storage.getCasino(id);
       if (!casino) {
@@ -941,12 +1019,24 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
   // Public: minimal settings for buttons/links
   app.get("/api/site/settings", async (_req: Request, res: Response) => {
     try {
+      setPublicCache(res, 60);
       const rows = await storage.getSiteSettings();
       const out: Record<string, string> = {};
       for (const r of rows) out[r.key] = r.value;
       res.json(out);
     } catch (error) {
       res.status(500).json({ error: getErrorMessage(error, "Failed to fetch site settings") });
+    }
+  });
+
+  // Public: homepage stats (computed + manual adjustments)
+  app.get("/api/site/stats", async (_req: Request, res: Response) => {
+    try {
+      setPublicCache(res, 15);
+      const stats = await getPublicStats();
+      res.json(stats);
+    } catch (error) {
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch site stats") });
     }
   });
 
@@ -989,10 +1079,77 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
     }
   });
 
+  // Admin: configure homepage stats (manual tweaks / discord sync)
+  app.get("/api/admin/site/stats", adminAuth, async (_req: Request, res: Response) => {
+    try {
+      const out = await getAdminStats();
+      res.json(out);
+    } catch (error) {
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch site stats") });
+    }
+  });
+
+  const updateSiteStatsSchema = z
+    .object({
+      communityMode: z.enum(["users", "discord", "manual"]).optional(),
+      discordGuildId: z.string().trim().optional().nullable(),
+      communityManual: z.coerce.number().int().min(0).optional(),
+      communityExtra: z.coerce.number().int().optional(),
+      givenAwayExtra: z.coerce.number().optional(),
+      winnersExtra: z.coerce.number().int().optional(),
+      liveHoursManual: z.coerce.number().int().min(0).optional(),
+    })
+    .strict();
+
+  app.put("/api/admin/site/stats", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const body = updateSiteStatsSchema.parse(req.body || {});
+      const patch: any = {};
+      if (body.communityMode !== undefined) patch.communityMode = body.communityMode;
+      if (body.discordGuildId !== undefined) {
+        const v = body.discordGuildId === null ? "" : String(body.discordGuildId || "");
+        patch.discordGuildId = v.trim() ? v.trim() : null;
+      }
+      if (body.communityManual !== undefined) patch.communityManual = Number(body.communityManual);
+      if (body.communityExtra !== undefined) patch.communityExtra = Number(body.communityExtra);
+      if (body.givenAwayExtra !== undefined) {
+        const n = Number(body.givenAwayExtra);
+        patch.givenAwayExtra = Number.isFinite(n) ? String(n) : "0";
+      }
+      if (body.winnersExtra !== undefined) patch.winnersExtra = Number(body.winnersExtra);
+      if (body.liveHoursManual !== undefined) patch.liveHoursManual = Number(body.liveHoursManual);
+
+      await storage.updateSiteStats(patch);
+      clearStatsCache();
+
+      // Audit
+      try {
+        await storage.createAdminAuditLog({
+          action: "site.stats.update",
+          entityType: "site_stats",
+          entityId: "1",
+          details: JSON.stringify(patch),
+          actorUserId: (req.session as any)?.userId,
+          actorRole: (req.session as any)?.staffRole || ((req.session as any)?.isAdmin ? "admin" : undefined),
+          actorLabel: (req.session as any)?.staffLabel,
+          ip: getClientIp(req),
+          userAgent: String(req.headers["user-agent"] || ""),
+        } as any);
+      } catch {}
+
+      const out = await getAdminStats();
+      res.json(out);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to update site stats") });
+    }
+  });
+
   // ============ LEADERBOARDS (per partner) ============
   // Public: list active leaderboards (no secrets)
   app.get("/api/leaderboards/active", async (_req: Request, res: Response) => {
     try {
+      setPublicCache(res, 15);
       const lbs = await storage.getActiveLeaderboards();
       // Strip sensitive API config for public responses
       const publicLbs = lbs.map((l) => ({
@@ -1121,6 +1278,7 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
   // Get all giveaways
   app.get("/api/giveaways", async (req: Request, res: Response) => {
     try {
+      setPublicCache(res, 10);
       const giveaways = await storage.getGiveaways();
       const userId = (req.session as any)?.userId as string | undefined;
 
@@ -1130,15 +1288,17 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
 
       const enteredSet = userId ? new Set(await storage.getUserEnteredGiveawayIds(userId)) : null;
 
-      const giveawaysWithDetails = await Promise.all(
-        giveaways.map(async (g) => ({
-          ...stripGiveawaySecrets(g),
-          entries: await storage.getGiveawayEntryCount(g.id),
-          requirements: withImplicitGiveawayRequirements(g, await storage.getGiveawayRequirements(g.id)),
-          hasEntered: enteredSet ? enteredSet.has(g.id) : false,
-          winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
-        }))
-      );
+      const giveawayIds = giveaways.map((g: any) => Number(g.id));
+      const countsMap = await storage.getGiveawayEntryCounts(giveawayIds);
+      const reqsMap = await storage.getGiveawayRequirementsForGiveaways(giveawayIds);
+
+      const giveawaysWithDetails = giveaways.map((g: any) => ({
+        ...stripGiveawaySecrets(g),
+        entries: Number(countsMap[Number(g.id)] || 0),
+        requirements: withImplicitGiveawayRequirements(g, reqsMap[Number(g.id)] || []),
+        hasEntered: enteredSet ? enteredSet.has(Number(g.id)) : false,
+        winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
+      }));
 
       res.json(giveawaysWithDetails);
     } catch (error) {
@@ -1158,15 +1318,17 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
 
       const enteredSet = userId ? new Set(await storage.getUserEnteredGiveawayIds(userId)) : null;
 
-      const giveawaysWithDetails = await Promise.all(
-        giveaways.map(async (g) => ({
-          ...stripGiveawaySecrets(g),
-          entries: await storage.getGiveawayEntryCount(g.id),
-          requirements: withImplicitGiveawayRequirements(g, await storage.getGiveawayRequirements(g.id)),
-          hasEntered: enteredSet ? enteredSet.has(g.id) : false,
-          winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
-        }))
-      );
+      const giveawayIds = giveaways.map((g: any) => Number(g.id));
+      const countsMap = await storage.getGiveawayEntryCounts(giveawayIds);
+      const reqsMap = await storage.getGiveawayRequirementsForGiveaways(giveawayIds);
+
+      const giveawaysWithDetails = giveaways.map((g: any) => ({
+        ...stripGiveawaySecrets(g),
+        entries: Number(countsMap[Number(g.id)] || 0),
+        requirements: withImplicitGiveawayRequirements(g, reqsMap[Number(g.id)] || []),
+        hasEntered: enteredSet ? enteredSet.has(Number(g.id)) : false,
+        winner: g.winnerId ? toWinnerSummary(winnerMap.get(String(g.winnerId))) : null,
+      }));
 
       res.json(giveawaysWithDetails);
     } catch (error) {
