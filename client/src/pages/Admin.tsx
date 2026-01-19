@@ -1,32 +1,8 @@
-
-async function uploadCasinoLogo(file: File): Promise<string> {
-  const fd = new FormData();
-  fd.append("logo", file);
-  const res = await fetch("/api/admin/uploads/casino-logo", {
-    method: "POST",
-    body: fd,
-    credentials: "include",
-  });
-  if (!res.ok) {
-    const txt = await res.text();
-    // Try JSON first, fall back to raw text
-    try {
-      const j = JSON.parse(txt);
-      throw new Error(j?.error || j?.message || "Upload failed");
-    } catch {
-      throw new Error(txt || "Upload failed");
-    }
-  }
-  const data = await res.json();
-  if (!data?.url) throw new Error("Upload failed: missing url");
-  return data.url as string;
-}
-
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Settings, Plus, Trash2, Edit, Save, X, ExternalLink, Trophy, Gift, Lock, Users, Search, DollarSign, Wallet, Image, Tv, LogIn, LogOut } from "lucide-react";
-import { Card } from "@/components/ui/card";
+import { Settings, Plus, Trash2, Edit, Save, X, ExternalLink, Trophy, Gift, Lock, Users, Search, DollarSign, Wallet, Image, Tv, LogIn, LogOut, Download, ScrollText, BadgeCheck, Loader2, RefreshCcw, GripVertical, ChevronUp, ChevronDown } from "lucide-react";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -36,15 +12,31 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Navigation } from "@/components/Navigation";
+import { Footer } from "@/components/Footer";
+import { useSeo } from "@/lib/seo";
 import { StreamEvents } from "@/components/StreamEvents";
 import { useToast } from "@/hooks/use-toast";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Slider } from "@/components/ui/slider";
+import { downloadCsv } from "@/lib/csv";
+import { clearClientCacheAndReload } from "@/lib/clearClientCache";
 import type { Casino, Giveaway, GiveawayRequirement, User, UserPayment, UserCasinoAccount, UserWallet } from "@shared/schema";
 
 // IMPORTANT: Don't import the Drizzle schema module (shared/schema.ts) into the browser bundle.
 // It pulls in server/database-only dependencies and can crash the Admin page at runtime.
 // Keep any small shared constants we need for the UI here instead.
 const CASINO_TIERS = ["platinum", "gold", "silver", "none"] as const;
+
+const HOME_BLOCKS = [
+  { id: "hero", label: "Hero + Stats" },
+  { id: "onboarding", label: "Quick Start + New Here" },
+  { id: "featured", label: "Featured Giveaway" },
+  { id: "casinos", label: "Casino Partners" },
+  { id: "giveaways", label: "Giveaways + Recent Winners" },
+  { id: "leaderboard", label: "Leaderboard" },
+] as const;
+
+const DEFAULT_HOME_BLOCK_ORDER: string[] = HOME_BLOCKS.map((b) => b.id);
 
 type RequirementForm = {
   type: string;
@@ -95,6 +87,73 @@ async function adminFetch(url: string, options: RequestInit = {}) {
     throw new Error(`Non-JSON response from ${url} (${res.status}). This usually means the API route was not found and the app returned HTML instead. Preview: ${preview}`);
   }
   return res.json();
+}
+
+async function uploadCasinoLogo(file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("logo", file);
+  const res = await fetch("/api/admin/uploads/casino-logo", {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    // Try JSON first, fall back to raw text
+    try {
+      const j = JSON.parse(txt);
+      throw new Error(j?.error || j?.message || "Upload failed");
+    } catch {
+      throw new Error(txt || "Upload failed");
+    }
+  }
+  const data = await res.json();
+  if (!data?.url) throw new Error("Upload failed: missing url");
+  return data.url as string;
+}
+
+async function uploadSiteLogo(file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("logo", file);
+  const res = await fetch("/api/admin/uploads/site-logo", {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    try {
+      const j = JSON.parse(txt);
+      throw new Error(j?.error || j?.message || "Upload failed");
+    } catch {
+      throw new Error(txt || "Upload failed");
+    }
+  }
+  const data = await res.json();
+  if (!data?.url) throw new Error("Upload failed: missing url");
+  return data.url as string;
+}
+
+async function uploadSiteBackground(file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("background", file);
+  const res = await fetch("/api/admin/uploads/site-background", {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    try {
+      const j = JSON.parse(txt);
+      throw new Error(j?.error || j?.message || "Upload failed");
+    } catch {
+      throw new Error(txt || "Upload failed");
+    }
+  }
+  const data = await res.json();
+  if (!data?.url) throw new Error("Upload failed: missing url");
+  return data.url as string;
 }
 
 type CasinoFormData = {
@@ -159,6 +218,7 @@ type WinnerSummary = {
   id: string;
   discordUsername?: string | null;
   discordAvatar?: string | null;
+  discordAvatarUrl?: string | null;
   kickUsername?: string | null;
   kickVerified?: boolean | null;
 };
@@ -168,6 +228,18 @@ type GiveawayAdmin = Giveaway & {
   requirements: GiveawayRequirement[];
   winner?: WinnerSummary | null;
 };
+
+type AdminAuditLog = {
+  id: number;
+  action: string;
+  entityType?: string | null;
+  entityId?: string | null;
+  details?: string | null;
+  ip?: string | null;
+  userAgent?: string | null;
+  createdAt?: string | null;
+};
+
 
 type GiveawayEntryAdmin = {
   id: number;
@@ -258,9 +330,17 @@ function AdminLogin({ onLogin }: { onLogin: () => void }) {
 }
 
 export default function Admin() {
+  useSeo({
+    title: "Admin",
+    description: "Manage casinos, giveaways, users, and site settings.",
+    path: "/admin",
+  });
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [adminInfo, setAdminInfo] = useState<any | null>(null);
+  const isStaff = adminInfo?.isStaff === true;
+  const isAdminLike = adminInfo?.isAdmin === true;
+  const perms = adminInfo?.permissions || {};
   const [casinoDialogOpen, setCasinoDialogOpen] = useState(false);
   const [giveawayDialogOpen, setGiveawayDialogOpen] = useState(false);
   const [editingCasino, setEditingCasino] = useState<Casino | null>(null);
@@ -271,9 +351,183 @@ export default function Admin() {
   const [entriesDialogOpen, setEntriesDialogOpen] = useState(false);
   const [selectedGiveawayForEntries, setSelectedGiveawayForEntries] = useState<GiveawayAdmin | null>(null);
 
+  // Quick filters / search (pro pass)
+  const [casinoSearch, setCasinoSearch] = useState("");
+  const [casinoStatusFilter, setCasinoStatusFilter] = useState<"all" | "active" | "inactive">("all");
+  const [casinoApiFilter, setCasinoApiFilter] = useState<"all" | "configured" | "not_configured">("all");
+  const [giveawaySearch, setGiveawaySearch] = useState("");
+  const [giveawayWinnerFilter, setGiveawayWinnerFilter] = useState<"all" | "with_winner" | "no_winner">("all");
+
+const [auditSearch, setAuditSearch] = useState("");
+
   // Site settings
   const [siteKickUrl, setSiteKickUrl] = useState("https://kick.com/get-some");
   const [siteDiscordUrl, setSiteDiscordUrl] = useState("https://discord.gg/");
+  const [siteBrandName, setSiteBrandName] = useState("GETSOME");
+  const [siteBrandLogoUrl, setSiteBrandLogoUrl] = useState("");
+  const [sitePartnerEmail, setSitePartnerEmail] = useState("");
+  const [uploadingSiteLogo, setUploadingSiteLogo] = useState(false);
+
+  // Theme
+  const [themeBgUrl, setThemeBgUrl] = useState("");
+  const [themeOverlay, setThemeOverlay] = useState(0.78);
+  const [themeAccent, setThemeAccent] = useState("#b026ff");
+  const [uploadingThemeBg, setUploadingThemeBg] = useState(false);
+
+  // Home page layout (reorderable blocks)
+  const [homeBlocksOrder, setHomeBlocksOrder] = useState<string[]>(DEFAULT_HOME_BLOCK_ORDER);
+  const [homeBlocksDragIndex, setHomeBlocksDragIndex] = useState<number | null>(null);
+
+  const normalizeHomeBlocksOrder = (ids: string[]): string[] => {
+    const allowed = new Set(HOME_BLOCKS.map((b) => b.id));
+    const out: string[] = [];
+    for (const raw of ids || []) {
+      const id = String(raw || '').trim();
+      if (!id || !allowed.has(id)) continue;
+      if (!out.includes(id)) out.push(id);
+    }
+    for (const id of DEFAULT_HOME_BLOCK_ORDER) {
+      if (!out.includes(id)) out.push(id);
+    }
+    return out;
+  };
+
+  const moveHomeBlock = (from: number, to: number) => {
+    setHomeBlocksOrder((prev) => {
+      const arr = [...normalizeHomeBlocksOrder(prev)];
+      if (from < 0 || from >= arr.length) return arr;
+      if (to < 0 || to >= arr.length) return arr;
+      const [item] = arr.splice(from, 1);
+      arr.splice(to, 0, item);
+      return arr;
+    });
+  };
+
+  const resetHomeBlocksOrder = () => setHomeBlocksOrder(DEFAULT_HOME_BLOCK_ORDER);
+
+
+  // Home page content (mini CMS)
+  const [homeHeroTitleLeft, setHomeHeroTitleLeft] = useState("");
+  const [homeHeroTitleHighlight, setHomeHeroTitleHighlight] = useState("");
+  const [homeHeroSubtitle, setHomeHeroSubtitle] = useState("");
+  const [homeHeroWatchLabel, setHomeHeroWatchLabel] = useState("");
+  const [homeHeroDiscordLabel, setHomeHeroDiscordLabel] = useState("");
+  const [homeHeroStreamGamesLabel, setHomeHeroStreamGamesLabel] = useState("");
+
+  const [homeQuickTitle, setHomeQuickTitle] = useState("");
+  const [homeQuickSubtitle, setHomeQuickSubtitle] = useState("");
+  const [homeQuickCtaLabel, setHomeQuickCtaLabel] = useState("");
+
+  const [homeTileGiveawaysTitle, setHomeTileGiveawaysTitle] = useState("");
+  const [homeTileGiveawaysSubtitle, setHomeTileGiveawaysSubtitle] = useState("");
+  const [homeTileLeaderboardsTitle, setHomeTileLeaderboardsTitle] = useState("");
+  const [homeTileLeaderboardsSubtitle, setHomeTileLeaderboardsSubtitle] = useState("");
+  const [homeTilePartnersTitle, setHomeTilePartnersTitle] = useState("");
+  const [homeTilePartnersSubtitle, setHomeTilePartnersSubtitle] = useState("");
+  const [homeTileStreamGamesTitle, setHomeTileStreamGamesTitle] = useState("");
+  const [homeTileStreamGamesSubtitle, setHomeTileStreamGamesSubtitle] = useState("");
+
+  const [homeNewHereTitle, setHomeNewHereTitle] = useState("");
+  const [homeNewHereSubtitle, setHomeNewHereSubtitle] = useState("");
+  const [homeNewHereStep1Title, setHomeNewHereStep1Title] = useState("");
+  const [homeNewHereStep1Text, setHomeNewHereStep1Text] = useState("");
+  const [homeNewHereStep2Title, setHomeNewHereStep2Title] = useState("");
+  const [homeNewHereStep2Text, setHomeNewHereStep2Text] = useState("");
+  const [homeNewHereStep3Title, setHomeNewHereStep3Title] = useState("");
+  const [homeNewHereStep3Text, setHomeNewHereStep3Text] = useState("");
+  const [homeNewHereCtaLabel, setHomeNewHereCtaLabel] = useState("");
+
+  const [homeFeaturedLabel, setHomeFeaturedLabel] = useState("");
+
+  const [homeCasinosTitle, setHomeCasinosTitle] = useState("");
+  const [homeCasinosSubtitle, setHomeCasinosSubtitle] = useState("");
+  const [homeCasinosViewAllLabel, setHomeCasinosViewAllLabel] = useState("");
+  const [homeCasinosEmptyTitle, setHomeCasinosEmptyTitle] = useState("");
+  const [homeCasinosEmptyText, setHomeCasinosEmptyText] = useState("");
+
+  const [homeGiveawaysTitle, setHomeGiveawaysTitle] = useState("");
+  const [homeGiveawaysSubtitle, setHomeGiveawaysSubtitle] = useState("");
+  const [homeGiveawaysViewAllLabel, setHomeGiveawaysViewAllLabel] = useState("");
+  const [homeGiveawaysEmptyTitle, setHomeGiveawaysEmptyTitle] = useState("");
+  const [homeGiveawaysEmptyText, setHomeGiveawaysEmptyText] = useState("");
+
+  const [homeLeaderboardTitle, setHomeLeaderboardTitle] = useState("");
+  const [homeLeaderboardSubtitleWithCasino, setHomeLeaderboardSubtitleWithCasino] = useState("");
+  const [homeLeaderboardSubtitleNoCasino, setHomeLeaderboardSubtitleNoCasino] = useState("");
+  const [homeLeaderboardCtaLabel, setHomeLeaderboardCtaLabel] = useState("");
+  const [homeLeaderboardEmptyTitle, setHomeLeaderboardEmptyTitle] = useState("");
+  const [homeLeaderboardEmptyText, setHomeLeaderboardEmptyText] = useState("");
+
+  const [homeWinnersTitle, setHomeWinnersTitle] = useState("");
+  const [homeWinnersEmptyText, setHomeWinnersEmptyText] = useState("");
+  const [homeWinnersViewAllLabel, setHomeWinnersViewAllLabel] = useState("");
+
+  const resetHomeContent = () => {
+    setHomeHeroTitleLeft("");
+    setHomeHeroTitleHighlight("");
+    setHomeHeroSubtitle("");
+    setHomeHeroWatchLabel("");
+    setHomeHeroDiscordLabel("");
+    setHomeHeroStreamGamesLabel("");
+
+    setHomeQuickTitle("");
+    setHomeQuickSubtitle("");
+    setHomeQuickCtaLabel("");
+
+    setHomeTileGiveawaysTitle("");
+    setHomeTileGiveawaysSubtitle("");
+    setHomeTileLeaderboardsTitle("");
+    setHomeTileLeaderboardsSubtitle("");
+    setHomeTilePartnersTitle("");
+    setHomeTilePartnersSubtitle("");
+    setHomeTileStreamGamesTitle("");
+    setHomeTileStreamGamesSubtitle("");
+
+    setHomeNewHereTitle("");
+    setHomeNewHereSubtitle("");
+    setHomeNewHereStep1Title("");
+    setHomeNewHereStep1Text("");
+    setHomeNewHereStep2Title("");
+    setHomeNewHereStep2Text("");
+    setHomeNewHereStep3Title("");
+    setHomeNewHereStep3Text("");
+    setHomeNewHereCtaLabel("");
+
+    setHomeFeaturedLabel("");
+
+    setHomeCasinosTitle("");
+    setHomeCasinosSubtitle("");
+    setHomeCasinosViewAllLabel("");
+    setHomeCasinosEmptyTitle("");
+    setHomeCasinosEmptyText("");
+
+    setHomeGiveawaysTitle("");
+    setHomeGiveawaysSubtitle("");
+    setHomeGiveawaysViewAllLabel("");
+    setHomeGiveawaysEmptyTitle("");
+    setHomeGiveawaysEmptyText("");
+
+    setHomeLeaderboardTitle("");
+    setHomeLeaderboardSubtitleWithCasino("");
+    setHomeLeaderboardSubtitleNoCasino("");
+    setHomeLeaderboardCtaLabel("");
+    setHomeLeaderboardEmptyTitle("");
+    setHomeLeaderboardEmptyText("");
+
+    setHomeWinnersTitle("");
+    setHomeWinnersEmptyText("");
+    setHomeWinnersViewAllLabel("");
+  };
+
+  // Homepage stats
+  const [statsCommunityMode, setStatsCommunityMode] = useState<"users" | "discord" | "manual">("users");
+  const [statsDiscordGuildId, setStatsDiscordGuildId] = useState("");
+  const [statsCommunityManual, setStatsCommunityManual] = useState(0);
+  const [statsCommunityExtra, setStatsCommunityExtra] = useState(0);
+  const [statsGivenAwayExtra, setStatsGivenAwayExtra] = useState(0);
+  const [statsWinnersExtra, setStatsWinnersExtra] = useState(0);
+  const [statsLiveHoursManual, setStatsLiveHoursManual] = useState(0);
+  const [statsSnapshot, setStatsSnapshot] = useState<any | null>(null);
 
   // Leaderboards
   const [leaderboardDialogOpen, setLeaderboardDialogOpen] = useState(false);
@@ -298,57 +552,191 @@ export default function Admin() {
   useEffect(() => {
     fetch("/api/admin/me", { credentials: "include" })
       .then(res => res.json())
-      .then(data => setIsAuthenticated(data.isAdmin))
-      .catch(() => setIsAuthenticated(false));
+      .then(data => setAdminInfo(data))
+      .catch(() => setAdminInfo({ isStaff: false, isAdmin: false, role: null, permissions: {} }));
   }, []);
 
   // Fetch all casinos including inactive (admin endpoint)
   const { data: casinos = [], isLoading: loadingCasinos } = useQuery<Casino[]>({
     queryKey: ["/api/admin/casinos"],
     queryFn: () => adminFetch("/api/admin/casinos"),
-    enabled: isAuthenticated === true,
+    enabled: isAdminLike === true,
   });
 
   // Site settings
   const { data: siteSettings = {} } = useQuery<Record<string, string>>({
     queryKey: ["/api/admin/site/settings"],
-    queryFn: () => adminFetch("/api/admin/site-settings"),
-    enabled: isAuthenticated === true,
+    queryFn: () => adminFetch("/api/admin/site/settings"),
+    enabled: isAdminLike === true,
   });
+
+  const { data: siteStatsAdmin, isLoading: loadingSiteStats } = useQuery<any>({
+    queryKey: ["/api/admin/site/stats"],
+    queryFn: () => adminFetch("/api/admin/site/stats"),
+    enabled: isAdminLike === true,
+  });
+
+// Admin audit log
+const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAuditLog[]>({
+  queryKey: ["/api/admin/audit", auditSearch],
+  queryFn: () => adminFetch(`/api/admin/audit?q=${encodeURIComponent(auditSearch)}`),
+  enabled: isAdminLike === true,
+});
+
 
   useEffect(() => {
     if (siteSettings?.kickUrl) setSiteKickUrl(siteSettings.kickUrl);
     if (siteSettings?.discordUrl) setSiteDiscordUrl(siteSettings.discordUrl);
+    if (siteSettings?.brandName) setSiteBrandName(siteSettings.brandName);
+    if (siteSettings?.brandLogoUrl) setSiteBrandLogoUrl(siteSettings.brandLogoUrl);
+    if (siteSettings?.partnerEmail !== undefined) setSitePartnerEmail(siteSettings.partnerEmail || "");
+
+    if (siteSettings?.themeBackgroundUrl !== undefined) {
+      setThemeBgUrl(siteSettings.themeBackgroundUrl || "");
+    }
+    if (siteSettings?.themeOverlay !== undefined) {
+      const n = Number(String(siteSettings.themeOverlay || "").trim());
+      if (Number.isFinite(n)) {
+        const v = n > 1.2 ? n / 100 : n; // allow 78 (percent) or 0.78
+        setThemeOverlay(Math.max(0.4, Math.min(0.9, v)));
+      }
+    }
+    if (siteSettings?.themeAccent) setThemeAccent(siteSettings.themeAccent);
+
+
+    // Homepage content (mini CMS)
+    const g = (k: string) => (siteSettings as any)?.[k];
+    const setIf = (k: string, setter: (v: string) => void) => {
+      const v = g(k);
+      if (v !== undefined) setter(String(v || ""));
+    };
+
+    setIf("home.heroTitleLeft", setHomeHeroTitleLeft);
+    setIf("home.heroTitleHighlight", setHomeHeroTitleHighlight);
+    setIf("home.heroSubtitle", setHomeHeroSubtitle);
+    setIf("home.heroWatchLabel", setHomeHeroWatchLabel);
+    setIf("home.heroDiscordLabel", setHomeHeroDiscordLabel);
+    setIf("home.heroStreamGamesLabel", setHomeHeroStreamGamesLabel);
+
+    setIf("home.quickTitle", setHomeQuickTitle);
+    setIf("home.quickSubtitle", setHomeQuickSubtitle);
+    setIf("home.quickCtaLabel", setHomeQuickCtaLabel);
+
+    setIf("home.tileGiveawaysTitle", setHomeTileGiveawaysTitle);
+    setIf("home.tileGiveawaysSubtitle", setHomeTileGiveawaysSubtitle);
+    setIf("home.tileLeaderboardsTitle", setHomeTileLeaderboardsTitle);
+    setIf("home.tileLeaderboardsSubtitle", setHomeTileLeaderboardsSubtitle);
+    setIf("home.tilePartnersTitle", setHomeTilePartnersTitle);
+    setIf("home.tilePartnersSubtitle", setHomeTilePartnersSubtitle);
+    setIf("home.tileStreamGamesTitle", setHomeTileStreamGamesTitle);
+    setIf("home.tileStreamGamesSubtitle", setHomeTileStreamGamesSubtitle);
+
+    setIf("home.newHereTitle", setHomeNewHereTitle);
+    setIf("home.newHereSubtitle", setHomeNewHereSubtitle);
+    setIf("home.newHereStep1Title", setHomeNewHereStep1Title);
+    setIf("home.newHereStep1Text", setHomeNewHereStep1Text);
+    setIf("home.newHereStep2Title", setHomeNewHereStep2Title);
+    setIf("home.newHereStep2Text", setHomeNewHereStep2Text);
+    setIf("home.newHereStep3Title", setHomeNewHereStep3Title);
+    setIf("home.newHereStep3Text", setHomeNewHereStep3Text);
+    setIf("home.newHereCtaLabel", setHomeNewHereCtaLabel);
+
+    setIf("home.featuredLabel", setHomeFeaturedLabel);
+
+    setIf("home.casinosTitle", setHomeCasinosTitle);
+    setIf("home.casinosSubtitle", setHomeCasinosSubtitle);
+    setIf("home.casinosViewAllLabel", setHomeCasinosViewAllLabel);
+    setIf("home.casinosEmptyTitle", setHomeCasinosEmptyTitle);
+    setIf("home.casinosEmptyText", setHomeCasinosEmptyText);
+
+    setIf("home.giveawaysTitle", setHomeGiveawaysTitle);
+    setIf("home.giveawaysSubtitle", setHomeGiveawaysSubtitle);
+    setIf("home.giveawaysViewAllLabel", setHomeGiveawaysViewAllLabel);
+    setIf("home.giveawaysEmptyTitle", setHomeGiveawaysEmptyTitle);
+    setIf("home.giveawaysEmptyText", setHomeGiveawaysEmptyText);
+
+    setIf("home.leaderboardTitle", setHomeLeaderboardTitle);
+    setIf("home.leaderboardSubtitleWithCasino", setHomeLeaderboardSubtitleWithCasino);
+    setIf("home.leaderboardSubtitleNoCasino", setHomeLeaderboardSubtitleNoCasino);
+    setIf("home.leaderboardCtaLabel", setHomeLeaderboardCtaLabel);
+    setIf("home.leaderboardEmptyTitle", setHomeLeaderboardEmptyTitle);
+    setIf("home.leaderboardEmptyText", setHomeLeaderboardEmptyText);
+
+    setIf("home.winnersTitle", setHomeWinnersTitle);
+    setIf("home.winnersEmptyText", setHomeWinnersEmptyText);
+    setIf("home.winnersViewAllLabel", setHomeWinnersViewAllLabel);
+
+    // Homepage layout (block order)
+    const orderRaw = g("home.blocksOrder");
+    if (orderRaw !== undefined) {
+      const raw = String(orderRaw || "");
+      let ids: string[] = [];
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          ids = parsed.filter((x) => typeof x === 'string').map((x) => String(x).trim()).filter(Boolean);
+        }
+      } catch {
+        // ignore
+      }
+      if (!ids.length) {
+        ids = raw.split(',').map((s) => s.trim()).filter(Boolean);
+      }
+      setHomeBlocksOrder(ids.length ? normalizeHomeBlocksOrder(ids) : DEFAULT_HOME_BLOCK_ORDER);
+    }
   }, [siteSettings]);
+
+  useEffect(() => {
+    const cfg = siteStatsAdmin?.config;
+    if (!cfg) return;
+    setStatsCommunityMode((cfg.communityMode || "users") as any);
+    setStatsDiscordGuildId(String(cfg.discordGuildId || ""));
+    setStatsCommunityManual(Number(cfg.communityManual || 0));
+    setStatsCommunityExtra(Number(cfg.communityExtra || 0));
+    setStatsGivenAwayExtra(Number(cfg.givenAwayExtra || 0));
+    setStatsWinnersExtra(Number(cfg.winnersExtra || 0));
+    setStatsLiveHoursManual(Number(cfg.liveHoursManual || 0));
+    setStatsSnapshot(siteStatsAdmin?.stats || null);
+  }, [siteStatsAdmin]);
 
   // Leaderboards
   const { data: leaderboards = [], isLoading: loadingLeaderboards } = useQuery<any[]>({
     queryKey: ["/api/admin/leaderboards"],
     queryFn: () => adminFetch("/api/admin/leaderboards"),
-    enabled: isAuthenticated === true,
+    enabled: isAdminLike === true,
   });
 
   // Fetch giveaways  
   const { data: giveaways = [], isLoading: loadingGiveaways } = useQuery<GiveawayAdmin[]>({
     queryKey: ["/api/admin/giveaways"],
     queryFn: () => adminFetch("/api/admin/giveaways"),
-    enabled: isAuthenticated === true,
+    enabled: isStaff === true,
   });
 
   const { data: giveawayEntries = [], isLoading: loadingGiveawayEntries } = useQuery<GiveawayEntryAdmin[]>({
     queryKey: [selectedGiveawayForEntries ? `/api/admin/giveaways/${selectedGiveawayForEntries.id}/entries` : "/api/admin/giveaways/0/entries"],
     queryFn: () => adminFetch(`/api/admin/giveaways/${selectedGiveawayForEntries!.id}/entries`),
-    enabled: isAuthenticated === true && entriesDialogOpen && !!selectedGiveawayForEntries?.id,
+    enabled: isStaff === true && entriesDialogOpen && !!selectedGiveawayForEntries?.id,
   });
 
 
   // Casino mutations
   const createCasino = useMutation({
     mutationFn: async (data: CasinoFormData) => {
+      const name = (data.name || "").trim();
+      if (!name) throw new Error("Casino name is required");
+      const rawSlug = (data.slug || "").trim();
+      if (!rawSlug) throw new Error("Slug is required");
+      const slug = rawSlug
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, "-")
+        .replace(/^-+|-+$/g, "");
+      if (!slug) throw new Error("Slug must contain letters or numbers");
+
       const features = data.features.split(",").map(f => f.trim()).filter(Boolean);
       return adminFetch("/api/admin/casinos", {
         method: "POST",
-        body: JSON.stringify({ ...data, features }),
+        body: JSON.stringify({ ...data, name, slug, features }),
       });
     },
     onSuccess: () => {
@@ -366,9 +754,19 @@ export default function Admin() {
   const updateCasino = useMutation({
     mutationFn: async ({ id, data }: { id: number; data: Partial<CasinoFormData> }) => {
       const features = data.features?.split(",").map(f => f.trim()).filter(Boolean);
+      const payload: any = { ...data, ...(features ? { features } : {}) };
+      if (typeof data.name === "string") payload.name = data.name.trim();
+      if (typeof data.slug === "string") {
+        const slug = data.slug
+          .trim()
+          .toLowerCase()
+          .replace(/[^a-z0-9-]+/g, "-")
+          .replace(/^-+|-+$/g, "");
+        payload.slug = slug;
+      }
       return adminFetch(`/api/admin/casinos/${id}`, {
         method: "PATCH",
-        body: JSON.stringify({ ...data, features }),
+        body: JSON.stringify(payload),
       });
     },
     onSuccess: () => {
@@ -401,14 +799,83 @@ export default function Admin() {
   // Site settings mutation
   const saveSiteSettings = useMutation({
     mutationFn: async () => {
-      await adminFetch("/api/admin/site/settings", {
-        method: "POST",
-        body: JSON.stringify({ key: "kickUrl", value: siteKickUrl }),
-      });
-      await adminFetch("/api/admin/site/settings", {
-        method: "POST",
-        body: JSON.stringify({ key: "discordUrl", value: siteDiscordUrl }),
-      });
+      const pairs: Array<[string, string]> = [
+        ["brandName", (siteBrandName || "GETSOME").trim() || "GETSOME"],
+        ["brandLogoUrl", siteBrandLogoUrl || ""],
+        ["kickUrl", siteKickUrl || ""],
+        ["discordUrl", siteDiscordUrl || ""],
+        ["partnerEmail", (sitePartnerEmail || "").trim()],
+
+        ["themeBackgroundUrl", themeBgUrl || ""],
+        ["themeOverlay", String(Math.round(themeOverlay * 100) / 100)],
+        ["themeAccent", themeAccent || ""],
+
+        // Homepage content (mini CMS) — leave blank to use defaults
+        ["home.heroTitleLeft", (homeHeroTitleLeft || "").trim()],
+        ["home.heroTitleHighlight", (homeHeroTitleHighlight || "").trim()],
+        ["home.heroSubtitle", (homeHeroSubtitle || "").trim()],
+        ["home.heroWatchLabel", (homeHeroWatchLabel || "").trim()],
+        ["home.heroDiscordLabel", (homeHeroDiscordLabel || "").trim()],
+        ["home.heroStreamGamesLabel", (homeHeroStreamGamesLabel || "").trim()],
+
+        ["home.quickTitle", (homeQuickTitle || "").trim()],
+        ["home.quickSubtitle", (homeQuickSubtitle || "").trim()],
+        ["home.quickCtaLabel", (homeQuickCtaLabel || "").trim()],
+
+        ["home.tileGiveawaysTitle", (homeTileGiveawaysTitle || "").trim()],
+        ["home.tileGiveawaysSubtitle", (homeTileGiveawaysSubtitle || "").trim()],
+        ["home.tileLeaderboardsTitle", (homeTileLeaderboardsTitle || "").trim()],
+        ["home.tileLeaderboardsSubtitle", (homeTileLeaderboardsSubtitle || "").trim()],
+        ["home.tilePartnersTitle", (homeTilePartnersTitle || "").trim()],
+        ["home.tilePartnersSubtitle", (homeTilePartnersSubtitle || "").trim()],
+        ["home.tileStreamGamesTitle", (homeTileStreamGamesTitle || "").trim()],
+        ["home.tileStreamGamesSubtitle", (homeTileStreamGamesSubtitle || "").trim()],
+
+        ["home.newHereTitle", (homeNewHereTitle || "").trim()],
+        ["home.newHereSubtitle", (homeNewHereSubtitle || "").trim()],
+        ["home.newHereStep1Title", (homeNewHereStep1Title || "").trim()],
+        ["home.newHereStep1Text", (homeNewHereStep1Text || "").trim()],
+        ["home.newHereStep2Title", (homeNewHereStep2Title || "").trim()],
+        ["home.newHereStep2Text", (homeNewHereStep2Text || "").trim()],
+        ["home.newHereStep3Title", (homeNewHereStep3Title || "").trim()],
+        ["home.newHereStep3Text", (homeNewHereStep3Text || "").trim()],
+        ["home.newHereCtaLabel", (homeNewHereCtaLabel || "").trim()],
+
+        ["home.featuredLabel", (homeFeaturedLabel || "").trim()],
+
+        ["home.casinosTitle", (homeCasinosTitle || "").trim()],
+        ["home.casinosSubtitle", (homeCasinosSubtitle || "").trim()],
+        ["home.casinosViewAllLabel", (homeCasinosViewAllLabel || "").trim()],
+        ["home.casinosEmptyTitle", (homeCasinosEmptyTitle || "").trim()],
+        ["home.casinosEmptyText", (homeCasinosEmptyText || "").trim()],
+
+        ["home.giveawaysTitle", (homeGiveawaysTitle || "").trim()],
+        ["home.giveawaysSubtitle", (homeGiveawaysSubtitle || "").trim()],
+        ["home.giveawaysViewAllLabel", (homeGiveawaysViewAllLabel || "").trim()],
+        ["home.giveawaysEmptyTitle", (homeGiveawaysEmptyTitle || "").trim()],
+        ["home.giveawaysEmptyText", (homeGiveawaysEmptyText || "").trim()],
+
+        ["home.leaderboardTitle", (homeLeaderboardTitle || "").trim()],
+        ["home.leaderboardSubtitleWithCasino", (homeLeaderboardSubtitleWithCasino || "").trim()],
+        ["home.leaderboardSubtitleNoCasino", (homeLeaderboardSubtitleNoCasino || "").trim()],
+        ["home.leaderboardCtaLabel", (homeLeaderboardCtaLabel || "").trim()],
+        ["home.leaderboardEmptyTitle", (homeLeaderboardEmptyTitle || "").trim()],
+        ["home.leaderboardEmptyText", (homeLeaderboardEmptyText || "").trim()],
+
+        ["home.winnersTitle", (homeWinnersTitle || "").trim()],
+        ["home.winnersEmptyText", (homeWinnersEmptyText || "").trim()],
+        ["home.winnersViewAllLabel", (homeWinnersViewAllLabel || "").trim()],
+        ["home.blocksOrder", JSON.stringify(normalizeHomeBlocksOrder(homeBlocksOrder))],
+      ];
+
+      await Promise.all(
+        pairs.map(([key, value]) =>
+          adminFetch("/api/admin/site/settings", {
+            method: "POST",
+            body: JSON.stringify({ key, value }),
+          }),
+        ),
+      );
       return true;
     },
     onSuccess: () => {
@@ -417,6 +884,32 @@ export default function Admin() {
       toast({ title: "Site settings saved" });
     },
     onError: (err: any) => toast({ title: "Failed to save site settings", description: err?.message || "Request failed", variant: "destructive" }),
+  });
+
+  const saveSiteStats = useMutation({
+    mutationFn: async () => {
+      const payload = {
+        communityMode: statsCommunityMode,
+        discordGuildId: statsDiscordGuildId,
+        communityManual: Number(statsCommunityManual || 0),
+        communityExtra: Number(statsCommunityExtra || 0),
+        givenAwayExtra: Number(statsGivenAwayExtra || 0),
+        winnersExtra: Number(statsWinnersExtra || 0),
+        liveHoursManual: Number(statsLiveHoursManual || 0),
+      };
+      return adminFetch("/api/admin/site/stats", {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+    },
+    onSuccess: (data: any) => {
+      setStatsSnapshot(data?.stats || null);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/site/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/site/stats"] });
+      toast({ title: "Stats saved" });
+    },
+    onError: (err: any) =>
+      toast({ title: "Failed to save stats", description: err?.message || "Request failed", variant: "destructive" }),
   });
 
   // Leaderboard mutations
@@ -599,10 +1092,10 @@ const deleteLeaderboard = useMutation({
   
   const handleLogout = async () => {
     await fetch("/api/admin/logout", { method: "POST", credentials: "include" });
-    setIsAuthenticated(false);
+    setAdminInfo({ isStaff: false, isAdmin: false, role: null, permissions: {} });
   };
   
-  if (isAuthenticated === null) {
+  if (adminInfo === null) {
     return (
       <div className="min-h-screen flex items-center justify-center">
         <div className="text-white">Loading...</div>
@@ -610,8 +1103,15 @@ const deleteLeaderboard = useMutation({
     );
   }
   
-  if (!isAuthenticated) {
-    return <AdminLogin onLogin={() => setIsAuthenticated(true)} />;
+  if (!isStaff) {
+    return <AdminLogin onLogin={async () => {
+      try {
+        const data = await fetch("/api/admin/me", { credentials: "include" }).then(r => r.json());
+        setAdminInfo(data);
+      } catch {
+        setAdminInfo({ isStaff: false, isAdmin: false, role: null, permissions: {} });
+      }
+    }} />;
   }
 
   const openEditCasino = (casino: Casino) => {
@@ -665,11 +1165,41 @@ const deleteLeaderboard = useMutation({
     });
   })();
 
+  const adminCasinosFiltered = (() => {
+    const q = casinoSearch.trim().toLowerCase();
+    return (casinos || []).filter((c) => {
+      if (casinoStatusFilter === "active" && !c.isActive) return false;
+      if (casinoStatusFilter === "inactive" && c.isActive) return false;
+      const apiConfigured = Boolean((c as any).leaderboardApiUrl);
+      if (casinoApiFilter === "configured" && !apiConfigured) return false;
+      if (casinoApiFilter === "not_configured" && apiConfigured) return false;
+      if (!q) return true;
+      return (
+        (c.name || "").toLowerCase().includes(q) ||
+        (c.slug || "").toLowerCase().includes(q) ||
+        (c.affiliateCode || "").toLowerCase().includes(q)
+      );
+    });
+  })();
+
+  const adminGiveawaysSearchFiltered = (() => {
+    const q = giveawaySearch.trim().toLowerCase();
+    return (adminGiveawaysFiltered || []).filter((g: any) => {
+      if (giveawayWinnerFilter === "with_winner" && !g.winnerId) return false;
+      if (giveawayWinnerFilter === "no_winner" && g.winnerId) return false;
+      if (!q) return true;
+      return (
+        String(g.title || "").toLowerCase().includes(q) ||
+        String(g.prize || "").toLowerCase().includes(q)
+      );
+    });
+  })();
+
   return (
     <div className="min-h-screen">
       <Navigation />
       
-      <div className="pt-28 pb-24">
+      <div className="pt-24 sm:pt-28 pb-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div 
             className="text-center mb-12"
@@ -697,27 +1227,43 @@ const deleteLeaderboard = useMutation({
             </p>
           </motion.div>
 
-          <Tabs defaultValue="casinos" className="w-full">
-            <TabsList className="grid w-full grid-cols-6 mb-8 bg-card/50">
+          <Tabs defaultValue={isAdminLike ? "casinos" : "giveaways"} className="w-full">
+            <TabsList className="grid w-full grid-cols-4 md:grid-cols-8 mb-8 bg-card/50">
+              {isAdminLike && (
               <TabsTrigger value="casinos" className="font-display" data-testid="admin-tab-casinos">
                 <Trophy className="w-4 h-4 mr-2" /> Casinos
               </TabsTrigger>
+              )}
               <TabsTrigger value="giveaways" className="font-display" data-testid="admin-tab-giveaways">
                 <Gift className="w-4 h-4 mr-2" /> Giveaways
               </TabsTrigger>
               <TabsTrigger value="players" className="font-display" data-testid="admin-tab-players">
                 <Users className="w-4 h-4 mr-2" /> Players
               </TabsTrigger>
+              <TabsTrigger value="verifications" className="font-display" data-testid="admin-tab-verifications">
+                <BadgeCheck className="w-4 h-4 mr-2" /> Verifications
+              </TabsTrigger>
+              {isAdminLike && (
               <TabsTrigger value="stream-events" className="font-display" data-testid="admin-tab-stream-events">
                 <Tv className="w-4 h-4 mr-2" /> Stream Events
               </TabsTrigger>
+              )}
+              {isAdminLike && (
               <TabsTrigger value="leaderboards" className="font-display" data-testid="admin-tab-leaderboards">
                 <Trophy className="w-4 h-4 mr-2" /> Leaderboards
               </TabsTrigger>
+              )}
+              {isAdminLike && (
               <TabsTrigger value="site" className="font-display" data-testid="admin-tab-site">
                 <Settings className="w-4 h-4 mr-2" /> Site
               </TabsTrigger>
-            </TabsList>
+              )}
+              {isAdminLike && (
+                <TabsTrigger value="audit" className="font-display" data-testid="admin-tab-audit">
+                  <ScrollText className="w-4 h-4 mr-2" /> Audit
+                </TabsTrigger>
+              )}
+</TabsList>
 
             <TabsContent value="casinos">
               <div className="flex justify-between items-center mb-6">
@@ -766,7 +1312,7 @@ const deleteLeaderboard = useMutation({
                         <Label>Casino Logo</Label>
                         <div className="flex items-center gap-3">
                           {casinoForm.logo ? (
-                            <img src={casinoForm.logo} alt="Casino logo" className="w-12 h-12 rounded-xl object-cover border border-white/10" />
+                            <img loading="lazy" decoding="async" src={casinoForm.logo} alt="Casino logo" className="w-12 h-12 rounded-xl object-cover border border-white/10" />
                           ) : (
                             <div className="w-12 h-12 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-white font-semibold">
                               {(casinoForm.name || "").slice(0, 2).toUpperCase()}
@@ -949,9 +1495,44 @@ const deleteLeaderboard = useMutation({
                 </Dialog>
               </div>
 
+              <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center mb-6">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                  <Input
+                    value={casinoSearch}
+                    onChange={(e) => setCasinoSearch(e.target.value)}
+                    placeholder="Search casinos (name, slug, code)"
+                    className="pl-10 bg-white/5"
+                    data-testid="input-casino-search"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <Select value={casinoStatusFilter} onValueChange={(v: any) => setCasinoStatusFilter(v)}>
+                    <SelectTrigger className="bg-white/5 w-[150px]" data-testid="select-casino-status">
+                      <SelectValue placeholder="Status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="active">Active</SelectItem>
+                      <SelectItem value="inactive">Inactive</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <Select value={casinoApiFilter} onValueChange={(v: any) => setCasinoApiFilter(v)}>
+                    <SelectTrigger className="bg-white/5 w-[180px]" data-testid="select-casino-api">
+                      <SelectValue placeholder="API" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All APIs</SelectItem>
+                      <SelectItem value="configured">API configured</SelectItem>
+                      <SelectItem value="not_configured">No API</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
               {loadingCasinos ? (
                 <div className="text-center py-12 text-muted-foreground">Loading casinos...</div>
-              ) : casinos.length === 0 ? (
+              ) : (casinos || []).length === 0 ? (
                 <Card className="glass p-12 text-center">
                   <Trophy className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
                   <h3 className="font-display text-xl text-white mb-2">No Casinos Yet</h3>
@@ -960,17 +1541,31 @@ const deleteLeaderboard = useMutation({
                     <Plus className="w-4 h-4 mr-2" /> Add Casino
                   </Button>
                 </Card>
+              ) : adminCasinosFiltered.length === 0 ? (
+                <Card className="glass p-12 text-center">
+                  <Search className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="font-display text-xl text-white mb-2">No casinos found</h3>
+                  <p className="text-muted-foreground">Try clearing your filters or searching a different term.</p>
+                </Card>
               ) : (
                 <div className="space-y-4">
-                  {casinos.map((casino) => (
+                  {adminCasinosFiltered.map((casino) => (
                     <Card key={casino.id} className="glass p-6" data-testid={`admin-casino-${casino.id}`}>
                       <div className="flex items-center gap-4">
-                        <div 
-                          className="w-14 h-14 rounded-xl flex items-center justify-center font-display font-bold text-white"
-                          style={{ backgroundColor: casino.color }}
-                        >
-                          {casino.name.slice(0, 2)}
-                        </div>
+                        {casino.logo ? (
+                          <img loading="lazy" decoding="async"
+                            src={casino.logo}
+                            alt={`${casino.name} logo`}
+                            className="w-14 h-14 rounded-xl object-cover border border-white/10 bg-white/5"
+                          />
+                        ) : (
+                          <div
+                            className="w-14 h-14 rounded-xl flex items-center justify-center font-display font-bold text-white"
+                            style={{ backgroundColor: casino.color }}
+                          >
+                            {casino.name.slice(0, 2)}
+                          </div>
+                        )}
                         <div className="flex-1">
                           <div className="flex items-center gap-2">
                             <h3 className="font-display font-bold text-white text-lg">{casino.name}</h3>
@@ -1025,7 +1620,33 @@ const deleteLeaderboard = useMutation({
             <TabsContent value="giveaways">
               <div className="flex justify-between items-center mb-6">
                 <h2 className="font-display text-2xl font-bold text-white">Manage Giveaways</h2>
-                <Dialog open={giveawayDialogOpen} onOpenChange={(open) => {
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    className="font-display"
+                    onClick={() => {
+                      const rows = giveaways
+                        .filter((g) => !!g.winnerId)
+                        .map((g) => ({
+                          giveawayId: g.id,
+                          title: g.title,
+                          prize: g.prize,
+                          casinoId: g.casinoId,
+                          endsAt: g.endsAt,
+                          winnerId: g.winnerId,
+                          winnerPickedAt: (g as any).winnerPickedAt || "",
+                          winnerPickedBy: (g as any).winnerPickedBy || "",
+                          winnerSeed: (g as any).winnerSeed || "",
+                        }));
+                      downloadCsv(`giveaway_winners_${new Date().toISOString().slice(0, 10)}.csv`, rows);
+                    }}
+                    data-testid="button-export-winners"
+                  >
+                    Export Winners CSV
+                  </Button>
+
+                  {isAdminLike && (
+                    <Dialog open={giveawayDialogOpen} onOpenChange={(open) => {
                   setGiveawayDialogOpen(open);
                   if (!open) {
                     setEditingGiveaway(null);
@@ -1235,33 +1856,60 @@ const deleteLeaderboard = useMutation({
                     </div>
                   </DialogContent>
                 </Dialog>
+                  )}
+                </div>
               </div>
 
-              <div className="flex items-center gap-2 mb-6">
-                <Button
-                  variant={giveawayListMode === "all" ? "secondary" : "outline"}
-                  size="sm"
-                  onClick={() => setGiveawayListMode("all")}
-                  data-testid="filter-giveaways-all"
-                >
-                  All
-                </Button>
-                <Button
-                  variant={giveawayListMode === "active" ? "secondary" : "outline"}
-                  size="sm"
-                  onClick={() => setGiveawayListMode("active")}
-                  data-testid="filter-giveaways-active"
-                >
-                  Current
-                </Button>
-                <Button
-                  variant={giveawayListMode === "ended" ? "secondary" : "outline"}
-                  size="sm"
-                  onClick={() => setGiveawayListMode("ended")}
-                  data-testid="filter-giveaways-ended"
-                >
-                  Previous
-                </Button>
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant={giveawayListMode === "all" ? "secondary" : "outline"}
+                    size="sm"
+                    onClick={() => setGiveawayListMode("all")}
+                    data-testid="filter-giveaways-all"
+                  >
+                    All
+                  </Button>
+                  <Button
+                    variant={giveawayListMode === "active" ? "secondary" : "outline"}
+                    size="sm"
+                    onClick={() => setGiveawayListMode("active")}
+                    data-testid="filter-giveaways-active"
+                  >
+                    Current
+                  </Button>
+                  <Button
+                    variant={giveawayListMode === "ended" ? "secondary" : "outline"}
+                    size="sm"
+                    onClick={() => setGiveawayListMode("ended")}
+                    data-testid="filter-giveaways-ended"
+                  >
+                    Previous
+                  </Button>
+                </div>
+
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                    <Input
+                      value={giveawaySearch}
+                      onChange={(e) => setGiveawaySearch(e.target.value)}
+                      placeholder="Search giveaways (title, prize)"
+                      className="pl-10 bg-white/5 w-full sm:w-[280px]"
+                      data-testid="input-giveaway-search"
+                    />
+                  </div>
+                  <Select value={giveawayWinnerFilter} onValueChange={(v: any) => setGiveawayWinnerFilter(v)}>
+                    <SelectTrigger className="bg-white/5 w-full sm:w-[200px]" data-testid="select-giveaway-winner">
+                      <SelectValue placeholder="Winner" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All winners</SelectItem>
+                      <SelectItem value="with_winner">Has winner</SelectItem>
+                      <SelectItem value="no_winner">No winner</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
 
               {loadingGiveaways ? (
@@ -1283,9 +1931,15 @@ const deleteLeaderboard = useMutation({
                   </h3>
                   <p className="text-muted-foreground">Try a different filter.</p>
                 </Card>
+              ) : adminGiveawaysSearchFiltered.length === 0 ? (
+                <Card className="glass p-12 text-center">
+                  <Search className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="font-display text-xl text-white mb-2">No giveaways found</h3>
+                  <p className="text-muted-foreground">Try clearing your search or winner filter.</p>
+                </Card>
               ) : (
                 <div className="space-y-4">
-                  {adminGiveawaysFiltered.map((giveaway) => {
+                  {adminGiveawaysSearchFiltered.map((giveaway) => {
                     const isActive = giveaway.isActive && new Date(giveaway.endsAt) > new Date();
                     const winnerName = giveaway.winner?.discordUsername || giveaway.winner?.kickUsername || "Winner selected";
                     return (
@@ -1391,23 +2045,65 @@ const deleteLeaderboard = useMutation({
                           {(selectedGiveawayForEntries.entries || 0).toLocaleString()} entries
                         </p>
 
-                        {(() => {
-                          const ended = !(selectedGiveawayForEntries.isActive && new Date(selectedGiveawayForEntries.endsAt) > new Date());
-                          const canPick = ended && !selectedGiveawayForEntries.winnerId && (selectedGiveawayForEntries.entries || 0) > 0;
-                          if (!canPick) return null;
-                          return (
-                            <Button
-                              size="sm"
-                              onClick={() => pickGiveawayWinner.mutate(selectedGiveawayForEntries.id)}
-                              disabled={pickGiveawayWinner.isPending}
-                              className="font-display"
-                              data-testid="button-pick-winner-modal"
-                            >
-                              <Trophy className="w-4 h-4 mr-2" />
-                              Pick Winner
-                            </Button>
-                          );
-                        })()}
+                        <div className="flex items-center gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const g = selectedGiveawayForEntries;
+                              const winnerName = g.winner?.discordUsername || g.winner?.kickUsername || "";
+                              const rows = (giveawayEntries || []).map((e: any) => ({
+                                giveawayId: g.id,
+                                giveawayTitle: g.title,
+                                winnerUserId: g.winnerId || "",
+                                winnerName,
+                                userId: e.userId,
+                                discordUsername: e.user?.discordUsername || "",
+                                kickUsername: e.user?.kickUsername || "",
+                                enteredAt: e.createdAt ? new Date(e.createdAt as any).toISOString() : "",
+                              }));
+
+                              downloadCsv(
+                                `giveaway-${g.id}-entries.csv`,
+                                rows,
+                                [
+                                  "giveawayId",
+                                  "giveawayTitle",
+                                  "winnerUserId",
+                                  "winnerName",
+                                  "userId",
+                                  "discordUsername",
+                                  "kickUsername",
+                                  "enteredAt",
+                                ],
+                              );
+                            }}
+                            disabled={loadingGiveawayEntries || (giveawayEntries?.length || 0) === 0}
+                            data-testid="button-export-giveaway-entries-csv"
+                            title={giveawayEntries.length ? "Download entries as CSV" : "No entries to export"}
+                          >
+                            <Download className="w-4 h-4 mr-2" />
+                            Export CSV
+                          </Button>
+
+                          {(() => {
+                            const ended = !(selectedGiveawayForEntries.isActive && new Date(selectedGiveawayForEntries.endsAt) > new Date());
+                            const canPick = ended && !selectedGiveawayForEntries.winnerId && (selectedGiveawayForEntries.entries || 0) > 0;
+                            if (!canPick) return null;
+                            return (
+                              <Button
+                                size="sm"
+                                onClick={() => pickGiveawayWinner.mutate(selectedGiveawayForEntries.id)}
+                                disabled={pickGiveawayWinner.isPending}
+                                className="font-display"
+                                data-testid="button-pick-winner-modal"
+                              >
+                                <Trophy className="w-4 h-4 mr-2" />
+                                Pick Winner
+                              </Button>
+                            );
+                          })()}
+                        </div>
                       </div>
 
                       {selectedGiveawayForEntries.winnerId && (
@@ -1443,8 +2139,8 @@ const deleteLeaderboard = useMutation({
                                 <div key={e.id} className="flex items-center justify-between gap-3 p-2 rounded-md bg-white/5">
                                   <div className="flex items-center gap-2 min-w-0">
                                     <div className="w-8 h-8 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white">
-                                      {e.user?.discordAvatar ? (
-                                        <img src={e.user.discordAvatar} alt="" className="w-full h-full object-cover" />
+                                      {e.user?.discordAvatarUrl ? (
+                                        <img loading="lazy" decoding="async" src={e.user.discordAvatarUrl} alt="" className="w-full h-full object-cover" />
                                       ) : (
                                         (e.user?.discordUsername || e.user?.kickUsername || "?")
                                           .slice(0, 1)
@@ -1473,7 +2169,7 @@ const deleteLeaderboard = useMutation({
               </Dialog>
             </TabsContent>
 
-            <PlayersTab casinos={casinos} />
+            <PlayersTab casinos={casinos} canManagePayments={isAdminLike} />
 
             
 <TabsContent value="leaderboards">
@@ -1695,8 +2391,17 @@ const deleteLeaderboard = useMutation({
 
         <div className="space-y-2 md:col-span-2">
           <Label>Mapping JSON</Label>
-          <Textarea rows={8} value={leaderboardForm.mappingJson} onChange={(e) => setLeaderboardForm((p) => ({ ...p, apiMappingJson: e.target.value }))} />
-          <p className="text-xs text-muted-foreground">Example: {{"itemsPath":"data.items","rankFieldPath":"rank","usernameFieldPath":"username","userIdFieldPath":"id","valueFieldPath":"value"}}</p>
+          <Textarea
+            rows={8}
+            value={leaderboardForm.apiMappingJson}
+            onChange={(e) => setLeaderboardForm((p) => ({ ...p, apiMappingJson: e.target.value }))}
+          />
+          <p className="text-xs text-muted-foreground">
+            Example:{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
+              {`{"itemsPath":"data.items","rankFieldPath":"rank","usernameFieldPath":"username","userIdFieldPath":"id","valueFieldPath":"value"}`}
+            </code>
+          </p>
         </div>
       </div>
 
@@ -1724,8 +2429,65 @@ const deleteLeaderboard = useMutation({
             <TabsContent value="site">
               <Card className="glass p-6">
                 <h2 className="font-display text-2xl text-white mb-2">Site Settings</h2>
-                <p className="text-muted-foreground mb-6">Update the public buttons/links without editing code.</p>
+                <p className="text-muted-foreground mb-6">Branding + public links (no code changes).</p>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Brand Name</Label>
+                    <Input value={siteBrandName} onChange={(e) => setSiteBrandName(e.target.value)} placeholder="GETSOME" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Header Logo</Label>
+                    <div className="flex items-center gap-4">
+                      {siteBrandLogoUrl ? (
+                        <img loading="lazy" decoding="async"
+                          src={siteBrandLogoUrl}
+                          alt="Site logo"
+                          className="w-12 h-12 rounded-xl object-cover bg-white/5 border border-white/10"
+                        />
+                      ) : (
+                        <div className="w-12 h-12 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-white font-semibold">
+                          GS
+                        </div>
+                      )}
+                      <div className="flex-1">
+                        <Input
+                          type="file"
+                          accept="image/*"
+                          disabled={uploadingSiteLogo}
+                          onChange={async (e) => {
+                            const f = e.target.files?.[0];
+                            // allow selecting the same file again later
+                            e.currentTarget.value = "";
+                            if (!f) return;
+                            setUploadingSiteLogo(true);
+                            try {
+                              const url = await uploadSiteLogo(f);
+                              setSiteBrandLogoUrl(url);
+                              toast({ title: "Logo uploaded" });
+                            } catch (err: any) {
+                              toast({ title: "Logo upload failed", description: err?.message || "Upload failed", variant: "destructive" });
+                            } finally {
+                              setUploadingSiteLogo(false);
+                            }
+                          }}
+                        />
+                        <div className="flex items-center gap-2 mt-2">
+                          <Button type="button" variant="outline" size="sm" onClick={() => setSiteBrandLogoUrl("")} disabled={!siteBrandLogoUrl || uploadingSiteLogo}>
+                            Clear
+                          </Button>
+                          {uploadingSiteLogo ? (
+                            <span className="text-xs text-muted-foreground">Uploading...</span>
+                          ) : (
+                            <span className="text-xs text-muted-foreground">Square PNG/SVG recommended</span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-6 grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label>Kick Live URL</Label>
                     <Input value={siteKickUrl} onChange={(e) => setSiteKickUrl(e.target.value)} />
@@ -1735,6 +2497,556 @@ const deleteLeaderboard = useMutation({
                     <Input value={siteDiscordUrl} onChange={(e) => setSiteDiscordUrl(e.target.value)} />
                   </div>
                 </div>
+
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Partner Contact Email</Label>
+                    <Input type="email" value={sitePartnerEmail} onChange={(e) => setSitePartnerEmail(e.target.value)} placeholder="partners@yourdomain.com" />
+                    <p className="text-xs text-muted-foreground">Used by the "Become a Partner" button.</p>
+                  </div>
+                </div>
+
+                <div className="mt-8 pt-6 border-t border-white/10">
+                  <h3 className="font-display text-xl text-white mb-2">Theme</h3>
+                  <p className="text-muted-foreground mb-6">Background + accents (applies site-wide).</p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-3">
+                      <Label>Background Image</Label>
+                      <div className="flex items-start gap-4">
+                        <div className="w-24 h-16 rounded-xl overflow-hidden border border-white/10 bg-white/5 shrink-0">
+                          <div className="w-full h-full bg-cover bg-center" style={{ backgroundImage: themeBgUrl ? `url(${themeBgUrl})` : "none" }} />
+                        </div>
+                        <div className="flex-1 space-y-2">
+                          <Input value={themeBgUrl} onChange={(e) => setThemeBgUrl(e.target.value)} placeholder="https://... (or upload below)" />
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            disabled={uploadingThemeBg}
+                            onChange={async (e) => {
+                              const f = e.target.files?.[0];
+                              e.currentTarget.value = "";
+                              if (!f) return;
+                              setUploadingThemeBg(true);
+                              try {
+                                const url = await uploadSiteBackground(f);
+                                setThemeBgUrl(url);
+                                toast({ title: "Background uploaded" });
+                              } catch (err: any) {
+                                toast({ title: "Upload failed", description: err?.message || "Upload failed", variant: "destructive" });
+                              } finally {
+                                setUploadingThemeBg(false);
+                              }
+                            }}
+                          />
+                          <div className="flex items-center gap-2">
+                            <Button type="button" variant="outline" size="sm" onClick={() => setThemeBgUrl("")} disabled={uploadingThemeBg || !themeBgUrl}>
+                              Clear
+                            </Button>
+                            {uploadingThemeBg ? (
+                              <span className="text-xs text-muted-foreground">Uploading...</span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">WebP recommended (keeps size small)</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-6">
+                      <div className="space-y-3">
+                        <Label>Overlay Darkness</Label>
+                        <div className="flex items-center gap-4">
+                          <Slider
+                            value={[Math.round(themeOverlay * 100)]}
+                            min={40}
+                            max={90}
+                            step={1}
+                            onValueChange={(v) => setThemeOverlay(Math.max(0.4, Math.min(0.9, (v?.[0] ?? 78) / 100)))}
+                          />
+                          <div className="w-14 text-right text-sm text-white/80 tabular-nums">{Math.round(themeOverlay * 100)}%</div>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Higher = darker background (better readability).</p>
+                      </div>
+
+                      <div className="space-y-3">
+                        <Label>Accent Color</Label>
+                        <div className="flex items-center gap-3">
+                          <Input type="color" value={themeAccent} onChange={(e) => setThemeAccent(e.target.value)} className="h-10 w-14 p-1" />
+                          <Input value={themeAccent} onChange={(e) => setThemeAccent(e.target.value)} className="font-mono" />
+                          <Button type="button" variant="outline" size="sm" onClick={() => setThemeAccent("#b026ff")}>
+                            Reset
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Controls primary buttons, focus rings, and glow accents.</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-8 pt-6 border-t border-white/10">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-2">
+                    <h3 className="font-display text-xl text-white">Homepage Stats</h3>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/admin/site/stats"] })}
+                      disabled={loadingSiteStats}
+                    >
+                      Refresh
+                    </Button>
+                  </div>
+                  <p className="text-muted-foreground mb-6">
+                    These counters auto-sync from real data (users, giveaway winners, payment totals) with optional manual adjustments.
+                  </p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Community source</Label>
+                        <Select value={statsCommunityMode} onValueChange={(v) => setStatsCommunityMode(v as any)}>
+                          <SelectTrigger className="bg-white/5">
+                            <SelectValue placeholder="Select source" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="users">Registered users (auto)</SelectItem>
+                            <SelectItem value="discord">Discord server (auto)</SelectItem>
+                            <SelectItem value="manual">Manual</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Discord sync requires setting <span className="font-mono">DISCORD_BOT_TOKEN</span> in Railway.
+                        </p>
+                      </div>
+
+                      {statsCommunityMode === "discord" ? (
+                        <div className="space-y-2">
+                          <Label>Discord Guild ID</Label>
+                          <Input value={statsDiscordGuildId} onChange={(e) => setStatsDiscordGuildId(e.target.value)} placeholder="123456789012345678" />
+                        </div>
+                      ) : null}
+
+                      {statsCommunityMode === "manual" ? (
+                        <div className="space-y-2">
+                          <Label>Community (manual total)</Label>
+                          <Input type="number" value={String(statsCommunityManual)} onChange={(e) => setStatsCommunityManual(Number(e.target.value || 0))} />
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <Label>Community (manual adjustment)</Label>
+                          <Input type="number" value={String(statsCommunityExtra)} onChange={(e) => setStatsCommunityExtra(Number(e.target.value || 0))} />
+                          <p className="text-xs text-muted-foreground">Adds on top of the auto base.</p>
+                        </div>
+                      )}
+
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                        {loadingSiteStats ? (
+                          <div className="text-sm text-muted-foreground">Loading...</div>
+                        ) : (
+                          <div className="text-sm">
+                            <div className="flex items-center justify-between">
+                              <span className="text-muted-foreground">Community (current)</span>
+                              <span className="font-medium text-white">
+                                {Number(statsSnapshot?.community ?? statsSnapshot?.meta?.community?.total ?? 0).toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              Source: {statsSnapshot?.meta?.community?.source || "-"}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Given Away (manual extra)</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={String(statsGivenAwayExtra)}
+                          onChange={(e) => setStatsGivenAwayExtra(Number(e.target.value || 0))}
+                        />
+                        <p className="text-xs text-muted-foreground">Adds on top of payment totals (Admin → Payments) and completed giveaway prize amounts (parsed from the giveaway prize field).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Winners (manual extra)</Label>
+                        <Input type="number" value={String(statsWinnersExtra)} onChange={(e) => setStatsWinnersExtra(Number(e.target.value || 0))} />
+                        <p className="text-xs text-muted-foreground">Adds on top of giveaway winners.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Live Hours (manual total)</Label>
+                        <Input type="number" value={String(statsLiveHoursManual)} onChange={(e) => setStatsLiveHoursManual(Number(e.target.value || 0))} />
+                      </div>
+
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                        {loadingSiteStats ? (
+                          <div className="text-sm text-muted-foreground">Loading...</div>
+                        ) : (
+                          <div className="grid grid-cols-3 gap-3 text-sm">
+                            <div>
+                              <div className="text-muted-foreground">Given Away</div>
+                              <div className="font-medium text-white">${Number(statsSnapshot?.meta?.givenAway?.total ?? 0).toLocaleString()}</div>
+                            </div>
+                            <div>
+                              <div className="text-muted-foreground">Winners</div>
+                              <div className="font-medium text-white">{Number(statsSnapshot?.meta?.winners?.total ?? 0).toLocaleString()}</div>
+                            </div>
+                            <div>
+                              <div className="text-muted-foreground">Live Hours</div>
+                              <div className="font-medium text-white">{Number(statsSnapshot?.liveHours ?? statsSnapshot?.meta?.liveHours?.manual ?? 0).toLocaleString()}</div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end mt-6">
+                    <Button
+                      type="button"
+                      className="font-display bg-neon-cyan text-black"
+                      onClick={() => saveSiteStats.mutate()}
+                      disabled={saveSiteStats.isPending}
+                    >
+                      Save Stats
+                    </Button>
+                  </div>
+                </div>
+
+
+                <div className="mt-8 pt-6 border-t border-white/10">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-2">
+                    <div>
+                      <h3 className="font-display text-xl text-white">Homepage Content</h3>
+                      <p className="text-muted-foreground">Mini CMS for the Home page blocks. Leave a field blank to use the default copy.</p>
+                    </div>
+                    <Button type="button" variant="outline" size="sm" onClick={resetHomeContent}>
+                      Reset fields
+                    </Button>
+                  </div>
+
+                  <div className="rounded-2xl border border-white/10 bg-white/5 p-5 mt-5">
+                    <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
+                      <div>
+                        <div className="text-white font-display font-bold">Homepage Layout</div>
+                        <div className="text-xs text-white/60">Drag blocks to reorder, or use the arrows. This controls the section order on the Home page.</div>
+                      </div>
+                      <Button type="button" variant="outline" size="sm" onClick={resetHomeBlocksOrder}>
+                        Reset order
+                      </Button>
+                    </div>
+
+                    <div className="mt-4 space-y-2">
+                      {homeBlocksOrder.map((id, idx) => {
+                        const label = HOME_BLOCKS.find((b) => b.id === id)?.label || id;
+                        const isDragging = homeBlocksDragIndex === idx;
+                        return (
+                          <div
+                            key={id}
+                            className={
+                              "flex items-center justify-between rounded-xl border border-white/10 bg-white/5 p-3 " +
+                              (isDragging ? "ring-1 ring-neon-cyan/40" : "")
+                            }
+                            draggable
+                            onDragStart={() => setHomeBlocksDragIndex(idx)}
+                            onDragEnd={() => setHomeBlocksDragIndex(null)}
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={() => {
+                              if (homeBlocksDragIndex === null) return;
+                              moveHomeBlock(homeBlocksDragIndex, idx);
+                              setHomeBlocksDragIndex(null);
+                            }}
+                          >
+                            <div className="flex items-center gap-2 text-white">
+                              <GripVertical className="w-4 h-4 text-white/50" />
+                              <span className="font-medium">{label}</span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                onClick={() => moveHomeBlock(idx, idx - 1)}
+                                disabled={idx === 0}
+                                title="Move up"
+                              >
+                                <ChevronUp className="w-4 h-4" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="icon"
+                                onClick={() => moveHomeBlock(idx, idx + 1)}
+                                disabled={idx === homeBlocksOrder.length - 1}
+                                title="Move down"
+                              >
+                                <ChevronDown className="w-4 h-4" />
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    <div className="text-xs text-white/60 mt-3">Don’t forget to click “Save Settings” to apply the new order.</div>
+                  </div>
+
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                    <div className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-4">
+                      <div>
+                        <div className="text-white font-display font-bold">Hero</div>
+                        <div className="text-xs text-white/60">Main title, subtitle, and top buttons.</div>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Title (left)</Label>
+                          <Input value={homeHeroTitleLeft} onChange={(e) => setHomeHeroTitleLeft(e.target.value)} placeholder="GET" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Title (highlight)</Label>
+                          <Input value={homeHeroTitleHighlight} onChange={(e) => setHomeHeroTitleHighlight(e.target.value)} placeholder="SOME" />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Hero subtitle</Label>
+                        <Textarea value={homeHeroSubtitle} onChange={(e) => setHomeHeroSubtitle(e.target.value)} placeholder="Live giveaways, leaderboards, and stream games — all in one place." />
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="space-y-2">
+                          <Label>Primary button label</Label>
+                          <Input value={homeHeroWatchLabel} onChange={(e) => setHomeHeroWatchLabel(e.target.value)} placeholder="Watch Live" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Secondary button label</Label>
+                          <Input value={homeHeroDiscordLabel} onChange={(e) => setHomeHeroDiscordLabel(e.target.value)} placeholder="Join Discord" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Third button label</Label>
+                          <Input value={homeHeroStreamGamesLabel} onChange={(e) => setHomeHeroStreamGamesLabel(e.target.value)} placeholder="Stream Games" />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Featured giveaway label</Label>
+                        <Input value={homeFeaturedLabel} onChange={(e) => setHomeFeaturedLabel(e.target.value)} placeholder="Live giveaway" />
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-4">
+                      <div>
+                        <div className="text-white font-display font-bold">Quick Start</div>
+                        <div className="text-xs text-white/60">The “Everything in one hub” block and the 4 tiles.</div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Title</Label>
+                        <Input value={homeQuickTitle} onChange={(e) => setHomeQuickTitle(e.target.value)} placeholder="Everything in one hub" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Subtitle</Label>
+                        <Textarea value={homeQuickSubtitle} onChange={(e) => setHomeQuickSubtitle(e.target.value)} placeholder="Giveaways, leaderboards, partners, and stream games — built for speed and mobile." />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>CTA button label</Label>
+                        <Input value={homeQuickCtaLabel} onChange={(e) => setHomeQuickCtaLabel(e.target.value)} placeholder="Browse Giveaways" />
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Tile: Giveaways (title)</Label>
+                          <Input value={homeTileGiveawaysTitle} onChange={(e) => setHomeTileGiveawaysTitle(e.target.value)} placeholder="Giveaways" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Tile: Giveaways (subtitle)</Label>
+                          <Input value={homeTileGiveawaysSubtitle} onChange={(e) => setHomeTileGiveawaysSubtitle(e.target.value)} placeholder="Provably-fair draws, live on stream." />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Tile: Leaderboards (title)</Label>
+                          <Input value={homeTileLeaderboardsTitle} onChange={(e) => setHomeTileLeaderboardsTitle(e.target.value)} placeholder="Leaderboards" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Tile: Leaderboards (subtitle)</Label>
+                          <Input value={homeTileLeaderboardsSubtitle} onChange={(e) => setHomeTileLeaderboardsSubtitle(e.target.value)} placeholder="Track prize pools and top players." />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Tile: Partners (title)</Label>
+                          <Input value={homeTilePartnersTitle} onChange={(e) => setHomeTilePartnersTitle(e.target.value)} placeholder="Partners" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Tile: Partners (subtitle)</Label>
+                          <Input value={homeTilePartnersSubtitle} onChange={(e) => setHomeTilePartnersSubtitle(e.target.value)} placeholder="Official links, codes, and perks." />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Tile: Stream Games (title)</Label>
+                          <Input value={homeTileStreamGamesTitle} onChange={(e) => setHomeTileStreamGamesTitle(e.target.value)} placeholder="Stream Games" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Tile: Stream Games (subtitle)</Label>
+                          <Input value={homeTileStreamGamesSubtitle} onChange={(e) => setHomeTileStreamGamesSubtitle(e.target.value)} placeholder="Join live events and bonus hunts." />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-4">
+                      <div>
+                        <div className="text-white font-display font-bold">New Here</div>
+                        <div className="text-xs text-white/60">The 3-step onboarding card.</div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Title</Label>
+                        <Input value={homeNewHereTitle} onChange={(e) => setHomeNewHereTitle(e.target.value)} placeholder="New here?" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Subtitle</Label>
+                        <Input value={homeNewHereSubtitle} onChange={(e) => setHomeNewHereSubtitle(e.target.value)} placeholder="Get verified once, then enter in seconds." />
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Step 1 title</Label>
+                          <Input value={homeNewHereStep1Title} onChange={(e) => setHomeNewHereStep1Title(e.target.value)} placeholder="Connect Discord" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Step 1 text</Label>
+                          <Input value={homeNewHereStep1Text} onChange={(e) => setHomeNewHereStep1Text(e.target.value)} placeholder="Unlock entries + account linking." />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Step 2 title</Label>
+                          <Input value={homeNewHereStep2Title} onChange={(e) => setHomeNewHereStep2Title(e.target.value)} placeholder="Link partner account" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Step 2 text</Label>
+                          <Input value={homeNewHereStep2Text} onChange={(e) => setHomeNewHereStep2Text(e.target.value)} placeholder="Some giveaways require a linked account." />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Step 3 title</Label>
+                          <Input value={homeNewHereStep3Title} onChange={(e) => setHomeNewHereStep3Title(e.target.value)} placeholder="Upload wallet proof" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Step 3 text</Label>
+                          <Input value={homeNewHereStep3Text} onChange={(e) => setHomeNewHereStep3Text(e.target.value)} placeholder="Fast verification for payouts." />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>CTA label</Label>
+                        <Input value={homeNewHereCtaLabel} onChange={(e) => setHomeNewHereCtaLabel(e.target.value)} placeholder="Complete profile" />
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/10 bg-white/5 p-5 space-y-4">
+                      <div>
+                        <div className="text-white font-display font-bold">Section Headings</div>
+                        <div className="text-xs text-white/60">Titles, subtitles, and empty-state copy.</div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Casinos title</Label>
+                        <Input value={homeCasinosTitle} onChange={(e) => setHomeCasinosTitle(e.target.value)} placeholder="Casino Partners" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Casinos subtitle</Label>
+                        <Input value={homeCasinosSubtitle} onChange={(e) => setHomeCasinosSubtitle(e.target.value)} placeholder="Use the official links to support the stream." />
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Casinos "View all" label</Label>
+                          <Input value={homeCasinosViewAllLabel} onChange={(e) => setHomeCasinosViewAllLabel(e.target.value)} placeholder="View All" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Casinos empty title</Label>
+                          <Input value={homeCasinosEmptyTitle} onChange={(e) => setHomeCasinosEmptyTitle(e.target.value)} placeholder="No casino partners yet" />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Casinos empty description</Label>
+                        <Input value={homeCasinosEmptyText} onChange={(e) => setHomeCasinosEmptyText(e.target.value)} placeholder="Once a casino is added in Admin, it will show up here automatically." />
+                      </div>
+
+                      <div className="h-px bg-white/10 my-2" />
+
+                      <div className="space-y-2">
+                        <Label>Giveaways title</Label>
+                        <Input value={homeGiveawaysTitle} onChange={(e) => setHomeGiveawaysTitle(e.target.value)} placeholder="Giveaways" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Giveaways subtitle</Label>
+                        <Input value={homeGiveawaysSubtitle} onChange={(e) => setHomeGiveawaysSubtitle(e.target.value)} placeholder="Active giveaways running on stream." />
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Giveaways "View all" label</Label>
+                          <Input value={homeGiveawaysViewAllLabel} onChange={(e) => setHomeGiveawaysViewAllLabel(e.target.value)} placeholder="View All" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Giveaways empty title</Label>
+                          <Input value={homeGiveawaysEmptyTitle} onChange={(e) => setHomeGiveawaysEmptyTitle(e.target.value)} placeholder="No active giveaways" />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Giveaways empty description</Label>
+                        <Input value={homeGiveawaysEmptyText} onChange={(e) => setHomeGiveawaysEmptyText(e.target.value)} placeholder="When a giveaway is created and activated, it will appear here automatically." />
+                      </div>
+
+                      <div className="h-px bg-white/10 my-2" />
+
+                      <div className="space-y-2">
+                        <Label>Leaderboard title</Label>
+                        <Input value={homeLeaderboardTitle} onChange={(e) => setHomeLeaderboardTitle(e.target.value)} placeholder="Monthly Leaderboard" />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Leaderboard subtitle (with casino)</Label>
+                        <Input value={homeLeaderboardSubtitleWithCasino} onChange={(e) => setHomeLeaderboardSubtitleWithCasino(e.target.value)} placeholder="Top casino this month: {casino}" />
+                        <p className="text-xs text-muted-foreground">Use <span className="font-mono">{`{casino}`}</span> in the text to insert the casino name.</p>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Leaderboard subtitle (no casino)</Label>
+                        <Input value={homeLeaderboardSubtitleNoCasino} onChange={(e) => setHomeLeaderboardSubtitleNoCasino(e.target.value)} placeholder="Leaderboard updates will appear once a casino API is connected." />
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Leaderboard CTA label</Label>
+                          <Input value={homeLeaderboardCtaLabel} onChange={(e) => setHomeLeaderboardCtaLabel(e.target.value)} placeholder="View Full Leaderboard" />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Leaderboard empty title</Label>
+                          <Input value={homeLeaderboardEmptyTitle} onChange={(e) => setHomeLeaderboardEmptyTitle(e.target.value)} placeholder="(no leaderboard yet)" />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Leaderboard empty description</Label>
+                        <Input value={homeLeaderboardEmptyText} onChange={(e) => setHomeLeaderboardEmptyText(e.target.value)} placeholder="Add at least one casino leaderboard API in Admin to populate this section." />
+                      </div>
+
+                      <div className="h-px bg-white/10 my-2" />
+
+                      <div className="space-y-2">
+                        <Label>Recent winners title</Label>
+                        <Input value={homeWinnersTitle} onChange={(e) => setHomeWinnersTitle(e.target.value)} placeholder="Recent Winners" />
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                          <Label>Recent winners empty text</Label>
+                          <Input value={homeWinnersEmptyText} onChange={(e) => setHomeWinnersEmptyText(e.target.value)} placeholder="No winners yet." />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Recent winners "View all" label</Label>
+                          <Input value={homeWinnersViewAllLabel} onChange={(e) => setHomeWinnersViewAllLabel(e.target.value)} placeholder="View all" />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mt-8 pt-6 border-t border-white/10">
+                  <h3 className="font-display text-xl text-white mb-2">Troubleshooting</h3>
+                  <p className="text-muted-foreground mb-4">
+                    If the site ever looks blank after a deploy, this will clear browser cache storage and reload the app.
+                  </p>
+                  <Button type="button" variant="outline" className="gap-2" onClick={() => void clearClientCacheAndReload()}>
+                    <RefreshCcw className="w-4 h-4" />
+                    Clear client cache & reload
+                  </Button>
+                </div>
+
                 <div className="flex justify-end mt-6">
                   <Button className="font-display bg-neon-cyan text-black" onClick={() => saveSiteSettings.mutate()} disabled={saveSiteSettings.isPending}>
                     Save Settings
@@ -1743,12 +3055,82 @@ const deleteLeaderboard = useMutation({
               </Card>
             </TabsContent>
 
+<TabsContent value="audit">
+  <div className="flex flex-col gap-4">
+    <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+      <h2 className="font-display text-2xl font-bold text-white">Audit Log</h2>
+      <div className="flex items-center gap-2">
+        <Input
+          placeholder="Search action, entity, ip..."
+          value={auditSearch}
+          onChange={(e) => setAuditSearch(e.target.value)}
+          className="w-full md:w-[320px]"
+        />
+        <Button variant="outline" onClick={() => setAuditSearch("")}>Clear</Button>
+      </div>
+    </div>
+
+    <Card className="bg-card/60 border border-white/10">
+      <CardContent className="pt-6">
+        {loadingAuditLogs ? (
+          <div className="flex items-center justify-center py-10 text-muted-foreground">
+            <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading audit log...
+          </div>
+        ) : auditLogs.length === 0 ? (
+          <div className="text-center py-10 text-muted-foreground">No audit log entries yet.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-muted-foreground border-b border-white/10">
+                  <th className="py-2 pr-4">Time</th>
+                  <th className="py-2 pr-4">Action</th>
+                  <th className="py-2 pr-4">Entity</th>
+                  <th className="py-2 pr-4">IP</th>
+                  <th className="py-2 pr-4">Details</th>
+                </tr>
+              </thead>
+              <tbody>
+                {auditLogs.map((row) => (
+                  <tr key={row.id} className="border-b border-white/5">
+                    <td className="py-2 pr-4 whitespace-nowrap">
+                      {row.createdAt ? new Date(row.createdAt).toLocaleString() : "-"}
+                    </td>
+                    <td className="py-2 pr-4 font-medium">{row.action}</td>
+                    <td className="py-2 pr-4">
+                      <span className="text-muted-foreground">{row.entityType || "-"}</span>
+                      {row.entityId ? <span className="ml-2 text-white/90">#{row.entityId}</span> : null}
+                    </td>
+                    <td className="py-2 pr-4 whitespace-nowrap">{row.ip || "-"}</td>
+                    <td className="py-2 pr-4 max-w-[480px]">
+                      <div className="truncate text-white/80">
+                        {row.details ? row.details : "-"}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  </div>
+</TabsContent>
+
+
+
+            <TabsContent value="verifications">
+              <VerificationsTab />
+            </TabsContent>
+
             <TabsContent value="stream-events">
               <StreamEvents adminFetch={adminFetch} />
             </TabsContent>
           </Tabs>
         </div>
       </div>
+      <Footer />
     </div>
   );
 }
@@ -1761,7 +3143,221 @@ type UserFullDetails = {
   totalPayments: string;
 };
 
-function PlayersTab({ casinos }: { casinos: Casino[] }) {
+type PendingCasinoAccount = UserCasinoAccount & { user: User; casino: Casino };
+type PendingWallet = UserWallet & { user: User; casino: Casino };
+type PendingVerificationsResponse = { casinoAccounts: PendingCasinoAccount[]; wallets: PendingWallet[] };
+
+function discordAvatarUrl(u: any) {
+  if (!u?.discordId || !u?.discordAvatar) return null;
+  return `https://cdn.discordapp.com/avatars/${u.discordId}/${u.discordAvatar}.png`;
+}
+
+function VerificationsTab() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [q, setQ] = useState("");
+
+  const { data, isLoading, error } = useQuery<PendingVerificationsResponse>({
+    queryKey: ["/api/admin/verifications", q],
+    queryFn: () => adminFetch(`/api/admin/verifications${q ? `?q=${encodeURIComponent(q)}` : ""}`),
+  });
+
+  const verifyCasinoAccount = useMutation({
+    mutationFn: async (payload: { id: number; verified: boolean }) => {
+      return adminFetch(`/api/casino-accounts/${payload.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ verified: payload.verified }),
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Casino account verified" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/verifications"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to verify", description: err?.message || "Try again", variant: "destructive" });
+    },
+  });
+
+  const verifyWallet = useMutation({
+    mutationFn: async (payload: { id: number; verified: boolean }) => {
+      return adminFetch(`/api/wallets/${payload.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ verified: payload.verified }),
+      });
+    },
+    onSuccess: () => {
+      toast({ title: "Wallet verified" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/verifications"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/users"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to verify", description: err?.message || "Try again", variant: "destructive" });
+    },
+  });
+
+  const casinoAccounts = data?.casinoAccounts || [];
+  const wallets = data?.wallets || [];
+  const total = casinoAccounts.length + wallets.length;
+
+  return (
+    <div>
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6">
+        <div>
+          <h2 className="font-display text-2xl font-bold text-white">Verification Queue</h2>
+          <p className="text-muted-foreground">Review pending casino links and wallet proof uploads.</p>
+        </div>
+        <div className="relative w-full md:w-[360px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <Input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search user, casino, wallet, or ID..."
+            className="pl-10 bg-white/5"
+            data-testid="input-verification-search"
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="glass p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-display text-lg text-white flex items-center gap-2">
+              <BadgeCheck className="w-5 h-5 text-neon-cyan" /> Pending Casino Accounts
+            </h3>
+            <Badge className={casinoAccounts.length ? "bg-yellow-500/20 text-yellow-300" : "bg-green-500/20 text-green-400"}>
+              {casinoAccounts.length ? `${casinoAccounts.length} pending` : "All clear"}
+            </Badge>
+          </div>
+
+          {isLoading ? (
+            <div className="text-center py-10 text-muted-foreground">Loading...</div>
+          ) : casinoAccounts.length === 0 ? (
+            <div className="text-center py-10 text-muted-foreground">No pending casino accounts.</div>
+          ) : (
+            <ScrollArea className="h-[520px] pr-4">
+              <div className="space-y-3">
+                {casinoAccounts.map((a) => (
+                  <Card key={a.id} className="bg-white/5 p-4" data-testid={`verification-casino-${a.id}`}> 
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white shrink-0">
+                          {discordAvatarUrl(a.user) ? (
+                            <img loading="lazy" decoding="async" src={discordAvatarUrl(a.user)!} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            (a.user.discordUsername || a.user.kickUsername || "?").slice(0, 1).toUpperCase()
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-white font-semibold truncate">{a.user.discordUsername || a.user.kickUsername || "Unknown"}</div>
+                          <div className="text-xs text-muted-foreground truncate">{a.user.discordId}</div>
+                          <div className="text-sm text-muted-foreground mt-2">
+                            <span className="text-white font-medium">{a.casino.name}</span> • Username: <span className="text-white">{a.username}</span>
+                          </div>
+                          <div className="text-xs text-muted-foreground font-mono break-all mt-1">OD: {a.odId}</div>
+                          <div className="text-xs text-muted-foreground mt-2">
+                            Submitted: {a.createdAt ? new Date(a.createdAt as any).toLocaleString() : ""}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => verifyCasinoAccount.mutate({ id: a.id, verified: true })}
+                          disabled={verifyCasinoAccount.isPending}
+                        >
+                          Verify
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </ScrollArea>
+          )}
+        </Card>
+
+        <Card className="glass p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-display text-lg text-white flex items-center gap-2">
+              <Wallet className="w-5 h-5 text-neon-purple" /> Pending Wallet Proofs
+            </h3>
+            <Badge className={wallets.length ? "bg-yellow-500/20 text-yellow-300" : "bg-green-500/20 text-green-400"}>
+              {wallets.length ? `${wallets.length} pending` : "All clear"}
+            </Badge>
+          </div>
+
+          {isLoading ? (
+            <div className="text-center py-10 text-muted-foreground">Loading...</div>
+          ) : wallets.length === 0 ? (
+            <div className="text-center py-10 text-muted-foreground">No pending wallet proofs.</div>
+          ) : (
+            <ScrollArea className="h-[520px] pr-4">
+              <div className="space-y-3">
+                {wallets.map((w) => (
+                  <Card key={w.id} className="bg-white/5 p-4" data-testid={`verification-wallet-${w.id}`}> 
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <div className="w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white shrink-0">
+                          {discordAvatarUrl(w.user) ? (
+                            <img loading="lazy" decoding="async" src={discordAvatarUrl(w.user)!} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            (w.user.discordUsername || w.user.kickUsername || "?").slice(0, 1).toUpperCase()
+                          )}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="text-white font-semibold truncate">{w.user.discordUsername || w.user.kickUsername || "Unknown"}</div>
+                          <div className="text-xs text-muted-foreground truncate">{w.user.discordId}</div>
+                          <div className="text-sm text-muted-foreground mt-2">
+                            <span className="text-white font-medium">{w.casino.name}</span>
+                          </div>
+                          <div className="text-xs text-muted-foreground font-mono break-all mt-1">{w.solAddress}</div>
+                          <div className="text-xs text-muted-foreground mt-2">
+                            Submitted: {w.createdAt ? new Date(w.createdAt as any).toLocaleString() : ""}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {w.screenshotUrl ? (
+                          <a
+                            href={w.screenshotUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-neon-cyan hover:text-neon-cyan/80"
+                            title="View proof"
+                          >
+                            <Image className="w-5 h-5" />
+                          </a>
+                        ) : null}
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => verifyWallet.mutate({ id: w.id, verified: true })}
+                          disabled={verifyWallet.isPending}
+                        >
+                          Verify
+                        </Button>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </ScrollArea>
+          )}
+        </Card>
+      </div>
+
+      {error ? (
+        <div className="mt-6 text-sm text-red-400">{(error as any)?.message || "Failed to load verifications"}</div>
+      ) : null}
+
+      <div className="mt-6 text-xs text-muted-foreground">Total pending items: {total}</div>
+    </div>
+  );
+}
+
+function PlayersTab({ casinos, canManagePayments }: { casinos: Casino[]; canManagePayments: boolean }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
@@ -1803,10 +3399,10 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
   });
 
   const verifyCasinoAccount = useMutation({
-    mutationFn: async (id: number) => {
-      return adminFetch(`/api/casino-accounts/${id}`, {
+    mutationFn: async (payload: { id: number; verified: boolean }) => {
+      return adminFetch(`/api/casino-accounts/${payload.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ verified: true }),
+        body: JSON.stringify({ verified: payload.verified }),
       });
     },
     onSuccess: () => {
@@ -1819,10 +3415,10 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
   });
 
   const verifyWallet = useMutation({
-    mutationFn: async (id: number) => {
-      return adminFetch(`/api/wallets/${id}`, {
+    mutationFn: async (payload: { id: number; verified: boolean }) => {
+      return adminFetch(`/api/wallets/${payload.id}`, {
         method: "PATCH",
-        body: JSON.stringify({ verified: true }),
+        body: JSON.stringify({ verified: payload.verified }),
       });
     },
     onSuccess: () => {
@@ -1877,7 +3473,7 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                   >
                     <div className="flex items-center gap-3">
                       {user.discordAvatar ? (
-                        <img 
+                        <img loading="lazy" decoding="async" 
                           src={`https://cdn.discordapp.com/avatars/${user.discordId}/${user.discordAvatar}.png`} 
                           alt="" 
                           className="w-10 h-10 rounded-full"
@@ -1914,7 +3510,7 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
               <div className="space-y-6">
                 <div className="flex items-center gap-4 pb-4 border-b border-white/10">
                   {userDetails.user.discordAvatar ? (
-                    <img 
+                    <img loading="lazy" decoding="async" 
                       src={`https://cdn.discordapp.com/avatars/${userDetails.user.discordId}/${userDetails.user.discordAvatar}.png`} 
                       alt="" 
                       className="w-16 h-16 rounded-full"
@@ -1933,12 +3529,14 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                       <p className="text-sm text-muted-foreground">Kick: {userDetails.user.kickUsername}</p>
                     )}
                   </div>
+{canManagePayments && (
                   <div className="ml-auto text-right">
                     <div className="text-sm text-muted-foreground">Total Paid</div>
                     <div className="font-display text-2xl font-bold text-neon-gold">
                       ${parseFloat(userDetails.totalPayments || "0").toFixed(2)}
                     </div>
                   </div>
+                )}
                 </div>
 
                 <div>
@@ -1966,15 +3564,26 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => verifyCasinoAccount.mutate(account.id)}
+                                  onClick={() => verifyCasinoAccount.mutate({ id: account.id, verified: true })}
                                   disabled={verifyCasinoAccount.isPending}
                                   data-testid={`button-verify-casino-account-${account.id}`}
                                 >
                                   Verify
                                 </Button>
                               )}
+                              {account.verified && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => verifyCasinoAccount.mutate({ id: account.id, verified: false })}
+                                  disabled={verifyCasinoAccount.isPending}
+                                  data-testid={`button-unverify-casino-account-${account.id}`}
+                                >
+                                  Unverify
+                                </Button>
+                              )}
                               <Badge className={account.verified ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400"}>
-                                {account.verified ? "Verified" : "Pending"}
+                                {account.verified ? "Verified" : "Pending verification"}
                               </Badge>
                             </div>
                           </div>
@@ -2016,15 +3625,26 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                                 <Button
                                   size="sm"
                                   variant="outline"
-                                  onClick={() => verifyWallet.mutate(wallet.id)}
+                                  onClick={() => verifyWallet.mutate({ id: wallet.id, verified: true })}
                                   disabled={verifyWallet.isPending}
                                   data-testid={`button-verify-wallet-${wallet.id}`}
                                 >
                                   Verify
                                 </Button>
                               )}
+                              {wallet.verified && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => verifyWallet.mutate({ id: wallet.id, verified: false })}
+                                  disabled={verifyWallet.isPending}
+                                  data-testid={`button-unverify-wallet-${wallet.id}`}
+                                >
+                                  Unverify
+                                </Button>
+                              )}
                               <Badge className={wallet.verified ? "bg-green-500/20 text-green-400" : "bg-yellow-500/20 text-yellow-400"}>
-                                {wallet.verified ? "Verified" : "Pending"}
+                                {wallet.verified ? "Verified" : "Pending verification"}
                               </Badge>
                             </div>
                           </div>
@@ -2039,6 +3659,7 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                     <h4 className="font-display text-lg font-bold text-white flex items-center gap-2">
                       <DollarSign className="w-5 h-5 text-neon-gold" /> Payment History
                     </h4>
+                    {canManagePayments && (
                     <Dialog open={paymentDialogOpen} onOpenChange={setPaymentDialogOpen}>
                       <DialogTrigger asChild>
                         <Button size="sm" className="font-display bg-neon-gold text-black hover:bg-neon-gold/80" data-testid="button-add-payment">
@@ -2100,6 +3721,7 @@ function PlayersTab({ casinos }: { casinos: Casino[] }) {
                         </div>
                       </DialogContent>
                     </Dialog>
+                    )}
                   </div>
                   {userDetails.payments.length === 0 ? (
                     <p className="text-muted-foreground text-sm">No payments recorded</p>

@@ -1,106 +1,130 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, X, Trophy, Gift, Users, LogIn, Settings, Zap } from "lucide-react";
+import { Menu, X, Trophy, Gift, Handshake, LogIn, Settings, Zap, User, Crown, Building2, ChevronDown, LogOut, RefreshCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { getQueryFn } from "@/lib/queryClient";
+import { useSession } from "@/hooks/useSession";
+import { clearClientCacheAndReload } from "@/lib/clearClientCache";
+import { clearClientCacheAndReload } from "@/lib/clearClientCache";
+
+type AdminMe = { isAdmin: boolean };
 
 const publicLinks = [
   { href: "/", label: "Home" },
   { href: "/leaderboard", label: "Leaderboard", icon: Trophy },
   { href: "/giveaways", label: "Giveaways", icon: Gift },
+  { href: "/winners", label: "Winners", icon: Crown },
+  { href: "/partners", label: "Partners", icon: Building2 },
   { href: "/stream-games", label: "Stream Games", icon: Zap },
-  { href: "/affiliates", label: "Affiliates", icon: Users },
-  { href: "/profile", label: "Profile", icon: Users },
+  { href: "/affiliates", label: "Affiliates", icon: Handshake },
+  { href: "/profile", label: "Profile", icon: User },
 ];
 
 export function Navigation() {
   const [location] = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [sessionUser, setSessionUser] = useState<null | { id: string; discordId?: string | null; discordUsername?: string | null; discordAvatar?: string | null }>(null);
-  
+
+  // Public site settings (branding)
+  const { data: siteSettingsRaw } = useQuery<Record<string, string> | null>({
+    queryKey: ["/api/site/settings"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 60_000,
+  });
+  const siteSettings = (siteSettingsRaw as any) || {};
+  const brandName = String(siteSettings.brandName || "GETSOME");
+  const brandLogoUrl = siteSettings.brandLogoUrl ? String(siteSettings.brandLogoUrl) : null;
+
+  // Session user (Discord login)
+  const { data: session } = useSession();
+  const sessionUser = session?.user ?? null;
+  const isLoggedIn = Boolean(sessionUser?.id);
+
+  // Admin session (password login)
+  const { data: adminMe } = useQuery<AdminMe | null>({
+    queryKey: ["/api/admin/me"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    retry: false,
+  });
+  const isAdmin = Boolean((adminMe as any)?.isAdmin);
+
   useEffect(() => {
-    let cancelled = false;
-
-    const load = async () => {
-      try {
-        const adminRes = await fetch("/api/admin/me", { credentials: "include" });
-        const adminData = await adminRes.json().catch(() => ({}));
-        if (!cancelled) setIsAdmin(Boolean(adminData?.isAdmin));
-      } catch {
-        if (!cancelled) setIsAdmin(false);
-      }
-
-      try {
-        const meRes = await fetch("/api/auth/me", { credentials: "include" });
-        const meData = await meRes.json().catch(() => ({}));
-        if (!cancelled) setSessionUser(meData?.user ?? null);
-      } catch {
-        if (!cancelled) setSessionUser(null);
-      }
-    };
-
-    load();
-
-    const onFocus = () => load();
-    window.addEventListener("focus", onFocus);
-    return () => {
-      cancelled = true;
-      window.removeEventListener("focus", onFocus);
-    };
+    // Close the mobile drawer when navigating
+    setMobileOpen(false);
   }, [location]);
-const isLoggedIn = Boolean(sessionUser?.id);
-  const avatarUrl = (() => {
-    const did = sessionUser?.discordId;
-    const av = sessionUser?.discordAvatar;
+
+  const avatarUrl = useMemo(() => {
+    const did = (sessionUser as any)?.discordId;
+    const av = (sessionUser as any)?.discordAvatar;
     if (!did || !av) return null;
     const ext = String(av).startsWith("a_") ? "gif" : "png";
     return `https://cdn.discordapp.com/avatars/${did}/${av}.${ext}?size=64`;
-  })();
+  }, [sessionUser]);
 
-  const logout = async () => {
+  const navLinks = useMemo(() => {
+    return isAdmin ? [...publicLinks, { href: "/admin", label: "Admin", icon: Settings }] : publicLinks;
+  }, [isAdmin]);
+
+  const beginDiscordLogin = () => {
+    window.location.href = "/api/auth/discord";
+  };
+
+  const logoutAll = async () => {
+    // Best effort: log out both the user session and the admin session.
     try {
       await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+    } catch {
+      // ignore
+    }
+    try {
+      await fetch("/api/admin/logout", { method: "POST", credentials: "include" });
     } catch {
       // ignore
     }
     window.location.href = "/";
   };
 
-  const beginDiscordLogin = () => {
-    window.location.href = "/api/auth/discord";
-  };
-  
-  const navLinks = isAdmin 
-    ? [...publicLinks, { href: "/admin", label: "Admin", icon: Settings }]
-    : publicLinks;
-
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 glass">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-20">
+        <div className="flex items-center h-20 gap-6">
           <Link href="/" data-testid="link-home">
-            <motion.div 
-              className="flex items-center gap-3 cursor-pointer"
-              whileHover={{ scale: 1.02 }}
-            >
-              <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-neon-purple to-neon-gold flex items-center justify-center">
-                <span className="font-display font-bold text-xl text-white">GS</span>
-              </div>
-              <span className="font-display font-bold text-2xl text-white text-glow-purple">
-                GETSOME
-              </span>
+            <motion.div className="flex items-center gap-3 cursor-pointer" whileHover={{ scale: 1.02 }}>
+              {brandLogoUrl ? (
+                <img
+                  src={brandLogoUrl}
+                  alt={`${brandName} logo`}
+                  loading="eager"
+                  decoding="async"
+                  fetchPriority="high"
+                  className="w-12 h-12 rounded-xl object-cover bg-white/5 border border-white/10"
+                />
+              ) : (
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-neon-purple to-neon-gold flex items-center justify-center">
+                  <span className="font-display font-bold text-xl text-white">GS</span>
+                </div>
+              )}
+              <span className="font-display font-bold text-2xl text-white text-glow-purple">{brandName}</span>
             </motion.div>
           </Link>
 
-          <div className="hidden md:flex items-center gap-8">
+          <div className="hidden md:flex flex-1 items-center justify-center gap-6">
             {navLinks.map((link) => (
               <Link key={link.href} href={link.href}>
                 <motion.span
-                  className={`font-display text-sm uppercase tracking-wider cursor-pointer transition-colors ${
-                    location === link.href
-                      ? "text-neon-gold text-glow-gold"
-                      : "text-muted-foreground hover:text-white"
+                  className={`font-sans text-xs font-semibold uppercase tracking-[0.14em] whitespace-nowrap cursor-pointer transition-colors ${
+                    location === link.href ? "text-neon-gold text-glow-gold" : "text-muted-foreground hover:text-white"
                   }`}
                   whileHover={{ y: -2 }}
                   data-testid={`nav-${link.label.toLowerCase()}`}
@@ -111,44 +135,67 @@ const isLoggedIn = Boolean(sessionUser?.id);
             ))}
           </div>
 
-          <div className="hidden md:flex items-center gap-4">
-            {isLoggedIn ? (
-              <div className="flex items-center gap-3">
-                <Link href="/profile">
-                  <div className="flex items-center gap-2 cursor-pointer">
+          <div className="hidden md:flex items-center gap-3 shrink-0">
+            {(isLoggedIn || isAdmin) ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" className="border-white/15 text-white hover:bg-white/5 gap-2">
                     {avatarUrl ? (
                       <img
                         src={avatarUrl}
                         alt="Discord avatar"
-                        className="w-8 h-8 rounded-full border border-white/10"
+                        loading="lazy"
+                        decoding="async"
+                        className="w-6 h-6 rounded-full border border-white/10"
                         referrerPolicy="no-referrer"
                       />
                     ) : (
-                      <div className="w-8 h-8 rounded-full bg-white/10 flex items-center justify-center text-xs text-white">
-                        {(sessionUser?.discordUsername || "U").slice(0, 2).toUpperCase()}
+                      <div className="w-6 h-6 rounded-full bg-white/10 flex items-center justify-center text-[10px] text-white">
+                        {String((sessionUser as any)?.discordUsername || (isAdmin ? "Admin" : "U")).slice(0, 2).toUpperCase()}
                       </div>
                     )}
-                    <span className="text-sm text-white/90 max-w-[140px] truncate">
-                      {sessionUser?.discordUsername || "Account"}
+                    <span className="text-sm font-medium">
+                      {isLoggedIn ? (sessionUser as any)?.discordUsername || "Account" : "Admin"}
                     </span>
-                  </div>
-                </Link>
-
-                <Button
-                  variant="outline"
-                  className="font-display border-white/15 text-white hover:bg-white/5"
-                  onClick={logout}
-                >
-                  Logout
-                </Button>
-              </div>
+                    <ChevronDown className="w-4 h-4 opacity-75" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  {isLoggedIn ? (
+                    <Link href="/profile">
+                      <DropdownMenuItem className="cursor-pointer">
+                        <User className="w-4 h-4" />
+                        <span>Profile</span>
+                      </DropdownMenuItem>
+                    </Link>
+                  ) : null}
+                  {isAdmin ? (
+                    <Link href="/admin">
+                      <DropdownMenuItem className="cursor-pointer">
+                        <Settings className="w-4 h-4" />
+                        <span>Admin</span>
+                      </DropdownMenuItem>
+                    </Link>
+                  ) : null}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="cursor-pointer" onClick={() => void clearClientCacheAndReload()}>
+                    <RefreshCcw className="w-4 h-4" />
+                    <span>Clear cache & reload</span>
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="cursor-pointer" onClick={logoutAll}>
+                    <LogOut className="w-4 h-4" />
+                    <span>Logout</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             ) : (
               <Button
                 className="font-display bg-[#5865F2] hover:bg-[#4752C4] text-white gap-2"
                 data-testid="button-discord-login"
                 onClick={beginDiscordLogin}
               >
-                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
                   <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />
                 </svg>
                 Login with Discord
@@ -156,13 +203,16 @@ const isLoggedIn = Boolean(sessionUser?.id);
             )}
           </div>
 
-          <button
-            className="md:hidden text-white p-2"
-            onClick={() => setMobileOpen(!mobileOpen)}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="md:hidden text-white border-white/10 hover:bg-white/5"
+            onClick={() => setMobileOpen((v) => !v)}
+            aria-label={mobileOpen ? "Close menu" : "Open menu"}
             data-testid="button-mobile-menu"
           >
             {mobileOpen ? <X size={24} /> : <Menu size={24} />}
-          </button>
+          </Button>
         </div>
       </div>
 
@@ -174,30 +224,35 @@ const isLoggedIn = Boolean(sessionUser?.id);
             exit={{ opacity: 0, height: 0 }}
             className="md:hidden glass border-t border-white/10"
           >
-            <div className="px-4 py-6 space-y-4">
-              {navLinks.map((link) => (
-                <Link key={link.href} href={link.href}>
-                  <div
-                    className={`font-display text-lg py-2 ${
-                      location === link.href ? "text-neon-gold" : "text-white"
-                    }`}
-                    onClick={() => setMobileOpen(false)}
-                  >
-                    {link.label}
-                  </div>
-                </Link>
-              ))}
-              {isLoggedIn ? (
+            <div className="px-4 py-6 space-y-3">
+              {navLinks.map((link) => {
+                const Icon = (link as any).icon;
+                return (
+                  <Link key={link.href} href={link.href}>
+                    <div
+                      className={`flex items-center gap-3 font-sans text-base font-semibold py-2 ${
+                        location === link.href ? "text-neon-gold" : "text-white"
+                      }`}
+                      onClick={() => setMobileOpen(false)}
+                    >
+                      {Icon ? <Icon size={18} className="opacity-80" /> : null}
+                      <span>{link.label}</span>
+                    </div>
+                  </Link>
+                );
+              })}
+
+              {(isLoggedIn || isAdmin) ? (
                 <Button
                   variant="outline"
-                  className="w-full font-display border-white/15 text-white hover:bg-white/5 gap-2 mt-4"
-                  onClick={logout}
+                  className="w-full font-sans border-white/15 text-white hover:bg-white/5 gap-2 mt-4"
+                  onClick={logoutAll}
                 >
                   Logout
                 </Button>
               ) : (
                 <Button
-                  className="w-full font-display bg-[#5865F2] hover:bg-[#4752C4] text-white gap-2 mt-4"
+                  className="w-full font-sans bg-[#5865F2] hover:bg-[#4752C4] text-white gap-2 mt-4"
                   data-testid="button-discord-login-mobile"
                   onClick={beginDiscordLogin}
                 >

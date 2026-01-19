@@ -1,12 +1,16 @@
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
-import { Users, ExternalLink, Star, Percent, Gift, Shield, Zap, Loader2 } from "lucide-react";
+import { Users, ExternalLink, Star, Percent, Gift, Shield, Zap, Mail } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Navigation } from "@/components/Navigation";
+import { Footer } from "@/components/Footer";
 import { useToast } from "@/hooks/use-toast";
 import { normalizeExternalUrl } from "@/lib/url";
+import { useSeo } from "@/lib/seo";
+import { EmptyState } from "@/components/EmptyState";
+import { SkeletonList } from "@/components/SkeletonBlocks";
 import type { Casino } from "@shared/schema";
 
 const benefits = [
@@ -59,11 +63,26 @@ function getTierStyles(tier: string) {
 }
 
 export default function Affiliates() {
+  useSeo({
+    title: "Affiliates",
+    description: "Exclusive bonuses and maximum rakeback through trusted partners.",
+    path: "/affiliates",
+  });
   const { toast } = useToast();
 
   const { data: casinos = [], isLoading } = useQuery<Casino[]>({
     queryKey: ["/api/casinos"],
   });
+
+  const { data: siteSettings = {} } = useQuery<Record<string, string>>({
+    queryKey: ["/api/site/settings"],
+  });
+
+  const brandName = String((siteSettings as any)?.brandName || "GETSOME");
+  const partnerEmail = String((siteSettings as any)?.partnerEmail || "").trim();
+  const partnerMailto = partnerEmail
+    ? `mailto:${partnerEmail}?subject=${encodeURIComponent(`Partnership Inquiry - ${brandName}`)}`
+    : "";
 
   const copyCode = (code: string, name: string) => {
     navigator.clipboard.writeText(code);
@@ -74,7 +93,7 @@ export default function Affiliates() {
     <div className="min-h-screen">
       <Navigation />
       
-      <div className="pt-28 pb-24">
+      <div className="pt-24 sm:pt-28 pb-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div 
             className="text-center mb-16"
@@ -109,15 +128,13 @@ export default function Affiliates() {
           </motion.div>
 
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-8 h-8 animate-spin text-neon-purple" />
-            </div>
+            <SkeletonList count={5} />
           ) : casinos.length === 0 ? (
-            <Card className="glass p-12 text-center">
-              <Users className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-              <h3 className="font-display text-xl text-white mb-2">No Affiliates Yet</h3>
-              <p className="text-muted-foreground">Check back soon for exclusive casino partnerships!</p>
-            </Card>
+            <EmptyState
+              icon={Users}
+              title="No affiliates yet"
+              description="Check back soon for exclusive casino partnerships."
+            />
           ) : (
             <div className="space-y-6">
               {casinos.map((casino, i) => {
@@ -142,7 +159,7 @@ export default function Affiliates() {
                             style={casino.color ? { backgroundColor: casino.color } : undefined}
                           >
                             {casino.logo ? (
-                              <img
+                              <img loading="lazy" decoding="async"
                                 src={casino.logo}
                                 alt={casino.name}
                                 className="w-full h-full object-contain rounded-2xl bg-white/5"
@@ -241,26 +258,33 @@ export default function Affiliates() {
                 Are you a casino or gambling platform looking to reach our engaged audience? 
                 We're always looking for quality partners to bring exclusive deals to our community.
               </p>
-              <Button 
-                size="lg" 
-                className="font-display bg-gradient-to-r from-neon-purple to-neon-gold hover:opacity-90"
-                data-testid="button-become-partner"
-              >
-                Become a Partner
-              </Button>
+              {partnerMailto ? (
+                <Button
+                  asChild
+                  size="lg"
+                  className="font-display rounded-full min-h-12 px-10 text-base bg-gradient-to-r from-neon-purple via-neon-pink to-neon-gold text-white shadow-lg shadow-neon-purple/25 hover:shadow-xl hover:shadow-neon-gold/25 hover:opacity-95"
+                  data-testid="button-become-partner"
+                >
+                  <a href={partnerMailto}>
+                    Become a Partner <Mail className="ml-2 w-4 h-4" />
+                  </a>
+                </Button>
+              ) : (
+                <Button
+                  size="lg"
+                  disabled
+                  className="font-display rounded-full min-h-12 px-10 text-base bg-gradient-to-r from-neon-purple via-neon-pink to-neon-gold text-white opacity-60"
+                  data-testid="button-become-partner"
+                >
+                  Become a Partner
+                </Button>
+              )}
             </Card>
           </motion.div>
 
-          <div className="mt-16 text-center text-sm text-muted-foreground">
-            <p className="mb-2">
-              18+ Only. Gambling can be addictive. Please play responsibly.
-            </p>
-            <p>
-              GETSOME may receive compensation from affiliate partners. Always check local laws before gambling.
-            </p>
-          </div>
         </div>
       </div>
+      <Footer />
     </div>
   );
 }

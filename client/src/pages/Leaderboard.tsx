@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Trophy, Crown, Medal, Award, TrendingUp, Calendar, ChevronDown } from "lucide-react";
@@ -6,8 +6,12 @@ import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Navigation } from "@/components/Navigation";
+import { Footer } from "@/components/Footer";
+import { useSeo } from "@/lib/seo";
 import { normalizeExternalUrl } from "@/lib/url";
+import { EmptyState } from "@/components/EmptyState";
 import type { Casino } from "@shared/schema";
 
 type LeaderboardEntry = {
@@ -50,9 +54,41 @@ function getTierColor(tier: string) {
   }
 }
 
+function formatTimeRemaining(iso?: string) {
+  if (!iso) return "--";
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms)) return "--";
+  if (ms <= 0) return "Ended";
+
+  const totalMinutes = Math.floor(ms / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+
+  const parts: string[] = [];
+  if (days) parts.push(`${days}d`);
+  if (hours || days) parts.push(`${hours}h`);
+  parts.push(`${minutes}m`);
+  return parts.join(" ");
+}
+
 export default function Leaderboard() {
+  useSeo({
+    title: "Leaderboard",
+    description: "View partner leaderboards and track the top players.",
+    path: "/leaderboard",
+  });
   const [period, setPeriod] = useState("monthly");
   const [selectedCasinoSlug, setSelectedCasinoSlug] = useState<string>("");
+
+  useEffect(() => {
+    // Allow deep links from the homepage: /leaderboard?casino=stake&period=monthly
+    const params = new URLSearchParams(window.location.search);
+    const slug = params.get("casino");
+    const p = params.get("period");
+    if (slug) setSelectedCasinoSlug(slug);
+    if (p && ["weekly", "monthly", "biweekly"].includes(p)) setPeriod(p);
+  }, []);
 
   const { data: casinos = [], isLoading: loadingCasinos } = useQuery<Casino[]>({
     queryKey: ["/api/casinos"],
@@ -62,9 +98,18 @@ export default function Leaderboard() {
     queryKey: ["/api/leaderboards/active"],
   });
 
-  const activeCasinos = casinos.filter(c => c.isActive);
+  const activeCasinos = casinos.filter((c) => c.isActive !== false);
   const selectedCasino = casinos.find(c => c.slug === selectedCasinoSlug) || activeCasinos[0];
   const selectedCasinoTier = (selectedCasino?.tier || "none") as string;
+
+  useEffect(() => {
+    if (!selectedCasino) return;
+    const isPeriodAvailable = (p: string) =>
+      activeLeaderboards.some((lb: any) => lb.periodType === p && lb.casinoId === selectedCasino.id);
+    if (isPeriodAvailable(period)) return;
+    const firstAvailable = ["monthly", "weekly", "biweekly"].find(isPeriodAvailable);
+    if (firstAvailable) setPeriod(firstAvailable);
+  }, [selectedCasino?.id, activeLeaderboards, period]);
 
   const selectedLb = activeLeaderboards.find((lb: any) => lb.periodType === period && (!selectedCasino || lb.casinoId === selectedCasino.id))
     || activeLeaderboards.find((lb: any) => !selectedCasino || lb.casinoId === selectedCasino.id);
@@ -89,24 +134,34 @@ export default function Leaderboard() {
         data: (leaderboardEntries || []).map((e: any) => ({
           rank: e.rank,
           username: e.username,
-          odId: e.userId || undefined,
+          odId: e.externalUserId || e.userId || undefined,
           wagered: Number(e.value ?? 0),
-          prize: "",
-          avatar: "",
-          change: "",
+          prize: e.prize ? String(e.prize) : "",
+          avatar: String(e.username || "U").slice(0, 2).toUpperCase(),
+          change: e.change ? String(e.change) : "",
         })),
       }
     : undefined;
 
-  const prizePool = "--";
+  const prizePool = (selectedLb as any)?.prizePool
+    ? `$${Number((selectedLb as any).prizePool).toLocaleString()}`
+    : "--";
 
-  const resetTime = selectedLb?.endAt ? new Date(selectedLb.endAt).toLocaleString() : (selectedLb?.startAt && selectedLb?.durationDays ? new Date(new Date(selectedLb.startAt).getTime() + selectedLb.durationDays*24*60*60*1000).toLocaleString() : "--");
+  const resetAtIso: string | undefined = selectedLb?.endAt
+    ? new Date(selectedLb.endAt).toISOString()
+    : (selectedLb?.startAt && selectedLb?.durationDays)
+      ? new Date(new Date(selectedLb.startAt).getTime() + Number(selectedLb.durationDays) * 24 * 60 * 60 * 1000).toISOString()
+      : undefined;
+
+  const resetAtText = resetAtIso ? new Date(resetAtIso).toLocaleString() : "--";
+  const resetInText = resetAtIso ? formatTimeRemaining(resetAtIso) : "--";
+  const lastUpdatedText = selectedLb?.lastFetchedAt ? new Date(selectedLb.lastFetchedAt).toLocaleString() : null;
 
   return (
     <div className="min-h-screen">
       <Navigation />
       
-      <div className="pt-28 pb-24">
+      <div className="pt-24 sm:pt-28 pb-24">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div 
             className="text-center mb-12"
@@ -125,13 +180,30 @@ export default function Leaderboard() {
           </motion.div>
 
           {loadingCasinos ? (
-            <div className="text-center py-12 text-muted-foreground">Loading casinos...</div>
-          ) : casinos.length === 0 ? (
-            <Card className="glass p-12 text-center">
-              <Trophy className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-              <h3 className="font-display text-xl text-white mb-2">No Casinos Yet</h3>
-              <p className="text-muted-foreground">Check back soon for leaderboards!</p>
+            <Card className="glass p-6">
+              <div className="flex flex-col lg:flex-row items-center justify-between gap-6">
+                <div className="w-full lg:w-auto">
+                  <Skeleton className="h-3 w-28 mb-2" />
+                  <Skeleton className="h-11 w-[240px]" />
+                </div>
+                <div className="flex items-center gap-4">
+                  <div className="text-center px-6 border-r border-white/10">
+                    <Skeleton className="h-7 w-20 mx-auto" />
+                    <Skeleton className="h-3 w-16 mx-auto mt-2" />
+                  </div>
+                  <div className="text-center px-6">
+                    <Skeleton className="h-7 w-24 mx-auto" />
+                    <Skeleton className="h-3 w-16 mx-auto mt-2" />
+                  </div>
+                </div>
+              </div>
             </Card>
+          ) : casinos.length === 0 ? (
+            <EmptyState
+              icon={Trophy}
+              title="No casinos yet"
+              description="Leaderboards will appear here once casino partners are added."
+            />
           ) : (
             <>
               <motion.div
@@ -171,7 +243,7 @@ export default function Leaderboard() {
                       {selectedCasino && (
                         <div className="flex items-center gap-3 p-3 bg-white/5 rounded-lg">
                           {selectedCasino.logo ? (
-                            <img src={selectedCasino.logo} alt={selectedCasino.name} className="w-12 h-12 rounded-lg object-contain" />
+                            <img loading="lazy" decoding="async" src={selectedCasino.logo} alt={selectedCasino.name} className="w-12 h-12 rounded-lg object-contain" />
                           ) : (
                             <div 
                               className="w-12 h-12 rounded-lg flex items-center justify-center font-display font-bold text-white"
@@ -200,62 +272,100 @@ export default function Leaderboard() {
                         <p className="text-xs text-muted-foreground">Prize Pool</p>
                       </div>
                       <div className="text-center px-6">
-                        <p className="text-2xl font-display font-bold text-neon-purple">18d 5h</p>
-                        <p className="text-xs text-muted-foreground">Until Reset</p>
+                        <p
+                          className="text-2xl font-display font-bold text-neon-purple"
+                          title={resetAtText !== "--" ? `Resets at: ${resetAtText}` : undefined}
+                          data-testid="text-reset-in"
+                        >
+                          {resetInText}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Until Reset
+                          {lastUpdatedText ? (
+                            <span className="block text-[10px] text-white/40 mt-1">
+                              Updated: {lastUpdatedText}
+                            </span>
+                          ) : null}
+                        </p>
                       </div>
                     </div>
                   </div>
                 </Card>
               </motion.div>
 
-              <Tabs defaultValue="monthly" className="w-full" onValueChange={setPeriod}>
+              <Tabs value={period} className="w-full" onValueChange={setPeriod}>
                 <TabsList className="grid w-full grid-cols-3 mb-8 bg-card/50">
-                  <TabsTrigger value="weekly" className="font-display" data-testid="tab-weekly">
+                  <TabsTrigger
+                    value="weekly"
+                    className="font-display"
+                    data-testid="tab-weekly"
+                    disabled={!activeLeaderboards.some((lb: any) => lb.periodType === "weekly" && (!selectedCasino || lb.casinoId === selectedCasino.id))}
+                  >
                     <Calendar className="w-4 h-4 mr-2" /> Weekly
                   </TabsTrigger>
-                  <TabsTrigger value="monthly" className="font-display" data-testid="tab-monthly">
+                  <TabsTrigger
+                    value="monthly"
+                    className="font-display"
+                    data-testid="tab-monthly"
+                    disabled={!activeLeaderboards.some((lb: any) => lb.periodType === "monthly" && (!selectedCasino || lb.casinoId === selectedCasino.id))}
+                  >
                     <TrendingUp className="w-4 h-4 mr-2" /> Monthly
                   </TabsTrigger>
-                  <TabsTrigger value="allTime" className="font-display" data-testid="tab-alltime">
-                    <Trophy className="w-4 h-4 mr-2" /> All Time
+                  <TabsTrigger
+                    value="biweekly"
+                    className="font-display"
+                    data-testid="tab-biweekly"
+                    disabled={!activeLeaderboards.some((lb: any) => lb.periodType === "biweekly" && (!selectedCasino || lb.casinoId === selectedCasino.id))}
+                  >
+                    <Trophy className="w-4 h-4 mr-2" /> Bi-weekly
                   </TabsTrigger>
                 </TabsList>
 
-                {["weekly", "monthly", "allTime"].map((tab) => (
+                {["weekly", "monthly", "biweekly"].map((tab) => (
                   <TabsContent key={tab} value={tab}>
                     <Card className="glass overflow-hidden" data-testid={`card-leaderboard-${tab}`}>
                       {loadingLeaderboard ? (
-                        <div className="p-12 text-center text-muted-foreground">
-                          Loading leaderboard...
+                        <div className="p-6 sm:p-8 space-y-4">
+                          {Array.from({ length: 10 }).map((_, i) => (
+                            <div key={i} className="flex items-center gap-4">
+                              <Skeleton className="h-10 w-10 rounded-full" />
+                              <div className="flex-1">
+                                <Skeleton className="h-4 w-40" />
+                                <Skeleton className="h-3 w-24 mt-2" />
+                              </div>
+                              <Skeleton className="h-5 w-20" />
+                            </div>
+                          ))}
                         </div>
                       ) : !selectedCasino?.leaderboardApiUrl ? (
-                        <div className="p-12 text-center">
-                          <Trophy className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-                          <h3 className="font-display text-xl text-white mb-2">Leaderboard Coming Soon</h3>
-                          <p className="text-muted-foreground">
-                            The leaderboard for {selectedCasino?.name || "this casino"} is being set up.
-                          </p>
+                        <div className="p-12">
+                          <EmptyState
+                            withCard={false}
+                            icon={Trophy}
+                            title="Leaderboard coming soon"
+                            description={`The leaderboard for ${selectedCasino?.name || "this casino"} is being set up.`}
+                          />
                         </div>
                       ) : leaderboardData?.data?.length === 0 ? (
-                        <div className="p-12 text-center">
-                          <Trophy className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-                          <h3 className="font-display text-xl text-white mb-2">No Data Yet</h3>
-                          <p className="text-muted-foreground">
-                            Be the first to climb the {selectedCasino?.name} leaderboard!
-                          </p>
-                          {selectedCasino?.affiliateLink && (
-                            <Button 
-                              className="mt-4 font-display"
-                              style={{ backgroundColor: selectedCasino.color }}
-                              onClick={() => {
-                                const url = normalizeExternalUrl((selectedCasino as any)?.affiliateLink);
-                                if (!url) return;
-                                window.open(url, "_blank", "noopener,noreferrer");
-                              }}
-                            >
-                              Sign Up at {selectedCasino.name}
-                            </Button>
-                          )}
+                        <div className="p-12">
+                          <EmptyState
+                            withCard={false}
+                            icon={Trophy}
+                            title="No data yet"
+                            description={`Be the first to climb the ${selectedCasino?.name} leaderboard!`}
+                            primaryAction={
+                              selectedCasino?.affiliateLink
+                                ? {
+                                    label: `Sign up at ${selectedCasino.name}`,
+                                    onClick: () => {
+                                      const url = normalizeExternalUrl((selectedCasino as any)?.affiliateLink);
+                                      if (!url) return;
+                                      window.open(url, "_blank", "noopener,noreferrer");
+                                    },
+                                  }
+                                : undefined
+                            }
+                          />
                         </div>
                       ) : (
                         <>
@@ -283,7 +393,9 @@ export default function Leaderboard() {
                               </div>
                               <div className="hidden md:flex col-span-1 items-center">
                                 <span className={`text-sm font-semibold ${getChangeColor(player.change)}`}>
-                                  {player.change === "0" ? "-" : player.change}
+                                  {player.change
+                                    ? (player.change === "0" ? "—" : player.change)
+                                    : "—"}
                                 </span>
                               </div>
                               <div className="col-span-6 md:col-span-4 flex items-center gap-3">
@@ -315,7 +427,7 @@ export default function Leaderboard() {
                                   player.rank === 1 ? "text-neon-gold text-glow-gold" : 
                                   player.rank <= 3 ? "text-neon-purple" : "text-white"
                                 }`}>
-                                  {player.prize}
+                                  {player.prize || "—"}
                                 </span>
                               </div>
                             </motion.div>
@@ -349,6 +461,7 @@ export default function Leaderboard() {
           )}
         </div>
       </div>
+      <Footer />
     </div>
   );
 }

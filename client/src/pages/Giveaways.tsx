@@ -4,19 +4,26 @@ import { useSession } from "@/hooks/useSession";
 import { useToast } from "@/hooks/use-toast";
 import { getQueryFn } from "@/lib/queryClient";
 import { motion } from "framer-motion";
-import { Gift, Clock, Users, CheckCircle, Lock, Sparkles, Loader2 } from "lucide-react";
+import { Gift, Clock, Users, CheckCircle, Lock, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Navigation } from "@/components/Navigation";
+import { Footer } from "@/components/Footer";
+import { useSeo } from "@/lib/seo";
+import { GiveawayRulesModal } from "@/components/GiveawayRulesModal";
+import { ProvablyFairModal } from "@/components/ProvablyFairModal";
+import { EmptyState } from "@/components/EmptyState";
+import { SkeletonGrid } from "@/components/SkeletonBlocks";
 import type { Casino, Giveaway, GiveawayRequirement } from "@shared/schema";
 
 type WinnerSummary = {
   id: string;
   discordUsername?: string | null;
   discordAvatar?: string | null;
+  discordAvatarUrl?: string | null;
   kickUsername?: string | null;
   kickVerified?: boolean | null;
 };
@@ -34,6 +41,11 @@ function parseRequireVerified(value: unknown): boolean {
 }
 
 export default function Giveaways() {
+  useSeo({
+    title: "Giveaways",
+    description: "Enter active giveaways and see previous winners.",
+    path: "/giveaways",
+  });
   const [filter, setFilter] = useState<"all" | "active" | "ended">("all");
 
   const queryClient = useQueryClient();
@@ -209,7 +221,7 @@ export default function Giveaways() {
     <div className="min-h-screen">
       <Navigation />
 
-      <div className="pt-28 pb-24">
+      <div className="pt-24 sm:pt-28 pb-24">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div
             className="text-center mb-12"
@@ -241,36 +253,45 @@ export default function Giveaways() {
             </Card>
           )}
 
-          <div className="flex gap-2 mb-8">
-            {(["all", "active", "ended"] as const).map((f) => (
-              <Button
-                key={f}
-                variant={filter === f ? "default" : "outline"}
-                className={`font-display capitalize ${filter === f ? "bg-neon-purple" : ""}`}
-                onClick={() => setFilter(f)}
-                data-testid={`filter-${f}`}
-              >
-                {f}
-              </Button>
-            ))}
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-8">
+            <div className="flex gap-2">
+              {(["all", "active", "ended"] as const).map((f) => (
+                <Button
+                  key={f}
+                  variant={filter === f ? "default" : "outline"}
+                  className={`font-display capitalize ${filter === f ? "bg-neon-purple" : ""}`}
+                  onClick={() => setFilter(f)}
+                  data-testid={`filter-${f}`}
+                >
+                  {f}
+                </Button>
+              ))}
+            </div>
+
+            <GiveawayRulesModal
+              variant="outline"
+              className="font-display border-white/15 text-white hover:bg-white/5"
+            />
           </div>
 
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-8 h-8 animate-spin text-neon-purple" />
+            <div className="mb-16">
+              <SkeletonGrid count={6} />
             </div>
           ) : filteredGiveaways.length === 0 ? (
-            <Card className="glass p-12 text-center mb-16">
-              <Gift className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-              <h3 className="font-display text-xl text-white mb-2">No Giveaways Found</h3>
-              <p className="text-muted-foreground">
-                {filter === "active"
-                  ? "No active giveaways right now. Check back soon!"
-                  : filter === "ended"
-                    ? "No ended giveaways yet."
-                    : "No giveaways available. Check back soon!"}
-              </p>
-            </Card>
+            <div className="mb-16">
+              <EmptyState
+                icon={Gift}
+                title="No giveaways found"
+                description={
+                  filter === "active"
+                    ? "No active giveaways right now. Check back soon."
+                    : filter === "ended"
+                      ? "No ended giveaways yet."
+                      : "No giveaways available right now."
+                }
+              />
+            </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-16">
               {filteredGiveaways.map((giveaway, i) => {
@@ -477,6 +498,10 @@ export default function Giveaways() {
                           </div>
                         </DialogContent>
                       </Dialog>
+
+                      <div className="mt-3 flex items-center justify-center">
+                        <ProvablyFairModal giveawayId={giveaway.id} />
+                      </div>
                     </Card>
                   </motion.div>
                 );
@@ -513,7 +538,7 @@ export default function Giveaways() {
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white">
                         {winner.avatar ? (
-                          <img src={winner.avatar} alt="" className="w-full h-full object-cover" />
+                          <img loading="lazy" decoding="async" src={winner.avatar} alt="" className="w-full h-full object-cover" />
                         ) : (
                           <span>🏆</span>
                         )}
@@ -530,6 +555,7 @@ export default function Giveaways() {
           )}
         </div>
       </div>
+      <Footer />
     </div>
   );
 }
