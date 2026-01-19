@@ -2373,7 +2373,7 @@ const deleteLeaderboard = useMutation({
                           value={String(statsGivenAwayExtra)}
                           onChange={(e) => setStatsGivenAwayExtra(Number(e.target.value || 0))}
                         />
-                        <p className="text-xs text-muted-foreground">Adds on top of payment totals tracked in Admin → Payments.</p>
+                        <p className="text-xs text-muted-foreground">Adds on top of payment totals (Admin → Payments) and completed giveaway prize amounts (parsed from the giveaway prize field).</p>
                       </div>
 
                       <div className="space-y-2">

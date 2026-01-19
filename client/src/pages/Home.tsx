@@ -258,7 +258,7 @@ export default function Home() {
                   {statsLoading ? (
                     <Skeleton className="h-7 w-20" />
                   ) : (
-                    <div className="text-2xl font-bold">{communityMembers.toLocaleString()}</div>
+                    <div className="text-2xl font-bold">{communityMembers.toLocaleString()}+</div>
                   )}
                 </div>
               </div>
@@ -271,7 +271,7 @@ export default function Home() {
                   {statsLoading ? (
                     <Skeleton className="h-7 w-24" />
                   ) : (
-                    <div className="text-2xl font-bold">{formatMoney(totalGivenAway)}</div>
+                    <div className="text-2xl font-bold">{formatMoney(totalGivenAway)}+</div>
                   )}
                 </div>
               </div>
@@ -284,7 +284,7 @@ export default function Home() {
                   {statsLoading ? (
                     <Skeleton className="h-7 w-16" />
                   ) : (
-                    <div className="text-2xl font-bold">{totalWinners.toLocaleString()}</div>
+                    <div className="text-2xl font-bold">{totalWinners.toLocaleString()}+</div>
                   )}
                 </div>
               </div>
@@ -297,7 +297,7 @@ export default function Home() {
                   {statsLoading ? (
                     <Skeleton className="h-7 w-14" />
                   ) : (
-                    <div className="text-2xl font-bold">{liveHours.toLocaleString()}</div>
+                    <div className="text-2xl font-bold">{liveHours.toLocaleString()}+</div>
                   )}
                 </div>
               </div>
