@@ -5,6 +5,7 @@ import homeLeaderboardRouter from "./routes/homeLeaderboard";
 import passport from "passport";
 import rateLimit from "express-rate-limit";
 import crypto from "crypto";
+import { clearStatsCache, getAdminStats, getPublicStats } from "./stats";
 import { 
   insertCasinoSchema, 
   insertGiveawaySchema,
@@ -1012,6 +1013,17 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
     }
   });
 
+  // Public: homepage stats (computed + manual adjustments)
+  app.get("/api/site/stats", async (_req: Request, res: Response) => {
+    try {
+      setPublicCache(res, 15);
+      const stats = await getPublicStats();
+      res.json(stats);
+    } catch (error) {
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch site stats") });
+    }
+  });
+
   // Admin: list settings as a simple key/value object (matches the client UI expectations)
   const siteSettingsAsRecord = async (_req: Request, res: Response) => {
     try {
@@ -1048,6 +1060,72 @@ app.get("/api/admin/audit", adminAuth, async (req: Request, res: Response) => {
     } catch (error) {
       if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
       res.status(500).json({ error: getErrorMessage(error, "Failed to upsert site setting") });
+    }
+  });
+
+  // Admin: configure homepage stats (manual tweaks / discord sync)
+  app.get("/api/admin/site/stats", adminAuth, async (_req: Request, res: Response) => {
+    try {
+      const out = await getAdminStats();
+      res.json(out);
+    } catch (error) {
+      res.status(500).json({ error: getErrorMessage(error, "Failed to fetch site stats") });
+    }
+  });
+
+  const updateSiteStatsSchema = z
+    .object({
+      communityMode: z.enum(["users", "discord", "manual"]).optional(),
+      discordGuildId: z.string().trim().optional().nullable(),
+      communityManual: z.coerce.number().int().min(0).optional(),
+      communityExtra: z.coerce.number().int().optional(),
+      givenAwayExtra: z.coerce.number().optional(),
+      winnersExtra: z.coerce.number().int().optional(),
+      liveHoursManual: z.coerce.number().int().min(0).optional(),
+    })
+    .strict();
+
+  app.put("/api/admin/site/stats", adminAuth, async (req: Request, res: Response) => {
+    try {
+      const body = updateSiteStatsSchema.parse(req.body || {});
+      const patch: any = {};
+      if (body.communityMode !== undefined) patch.communityMode = body.communityMode;
+      if (body.discordGuildId !== undefined) {
+        const v = body.discordGuildId === null ? "" : String(body.discordGuildId || "");
+        patch.discordGuildId = v.trim() ? v.trim() : null;
+      }
+      if (body.communityManual !== undefined) patch.communityManual = Number(body.communityManual);
+      if (body.communityExtra !== undefined) patch.communityExtra = Number(body.communityExtra);
+      if (body.givenAwayExtra !== undefined) {
+        const n = Number(body.givenAwayExtra);
+        patch.givenAwayExtra = Number.isFinite(n) ? String(n) : "0";
+      }
+      if (body.winnersExtra !== undefined) patch.winnersExtra = Number(body.winnersExtra);
+      if (body.liveHoursManual !== undefined) patch.liveHoursManual = Number(body.liveHoursManual);
+
+      await storage.updateSiteStats(patch);
+      clearStatsCache();
+
+      // Audit
+      try {
+        await storage.createAdminAuditLog({
+          action: "site.stats.update",
+          entityType: "site_stats",
+          entityId: "1",
+          details: JSON.stringify(patch),
+          actorUserId: (req.session as any)?.userId,
+          actorRole: (req.session as any)?.staffRole || ((req.session as any)?.isAdmin ? "admin" : undefined),
+          actorLabel: (req.session as any)?.staffLabel,
+          ip: getClientIp(req),
+          userAgent: String(req.headers["user-agent"] || ""),
+        } as any);
+      } catch {}
+
+      const out = await getAdminStats();
+      res.json(out);
+    } catch (error) {
+      if (error instanceof z.ZodError) return res.status(400).json({ error: error.errors });
+      res.status(500).json({ error: getErrorMessage(error, "Failed to update site stats") });
     }
   });
 

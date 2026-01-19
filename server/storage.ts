@@ -1,7 +1,7 @@
 import { 
   users, casinos, userCasinoAccounts, userWallets, giveaways, giveawayEntries, giveawayRequirements, leaderboardCache, userPayments,
   streamEvents, streamEventEntries, tournamentBrackets,
-  siteSettings, adminAuditLogs, leaderboards, leaderboardEntries,
+  siteSettings, siteStats, adminAuditLogs, leaderboards, leaderboardEntries,
   type User, type InsertUser,
   type Casino, type InsertCasino,
   type UserCasinoAccount, type InsertUserCasinoAccount,
@@ -14,6 +14,7 @@ import {
   type StreamEventEntry, type InsertStreamEventEntry,
   type TournamentBracket, type InsertTournamentBracket,
   type SiteSetting, type InsertSiteSetting,
+  type SiteStats, type InsertSiteStats,
   type AdminAuditLog, type InsertAdminAuditLog,
   type Leaderboard, type InsertLeaderboard,
   type LeaderboardEntry, type InsertLeaderboardEntry
@@ -68,6 +69,10 @@ createAdminAuditLog(log: InsertAdminAuditLog): Promise<AdminAuditLog>;
   getSiteSettings(): Promise<SiteSetting[]>;
   getSiteSetting(key: string): Promise<SiteSetting | undefined>;
   upsertSiteSetting(setting: InsertSiteSetting): Promise<SiteSetting>;
+
+  // Site stats (homepage counters)
+  getSiteStats(): Promise<SiteStats>;
+  updateSiteStats(patch: Partial<InsertSiteStats>): Promise<SiteStats>;
 
   // Partner Leaderboards
   getLeaderboards(admin?: boolean): Promise<Leaderboard[]>;
@@ -251,6 +256,39 @@ export class DatabaseStorage implements IStorage {
         target: siteSettings.key,
         set: { value: setting.value, updatedAt: new Date() },
       })
+      .returning();
+    return row;
+  }
+
+  // Site stats (homepage counters)
+  private async ensureSiteStatsRow(): Promise<SiteStats> {
+    const [row] = await db.select().from(siteStats).limit(1);
+    if (row) return row;
+    const [created] = await db
+      .insert(siteStats)
+      .values({
+        communityMode: "users",
+        communityManual: 0,
+        communityExtra: 0,
+        givenAwayExtra: "0",
+        winnersExtra: 0,
+        liveHoursManual: 0,
+        updatedAt: new Date(),
+      } as any)
+      .returning();
+    return created;
+  }
+
+  async getSiteStats(): Promise<SiteStats> {
+    return this.ensureSiteStatsRow();
+  }
+
+  async updateSiteStats(patch: Partial<InsertSiteStats>): Promise<SiteStats> {
+    const current = await this.ensureSiteStatsRow();
+    const [row] = await db
+      .update(siteStats)
+      .set({ ...patch, updatedAt: new Date() } as any)
+      .where(eq(siteStats.id, current.id))
       .returning();
     return row;
   }
