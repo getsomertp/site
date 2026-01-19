@@ -437,7 +437,8 @@ export default function Home() {
   );
 
   const onboardingBlock = (
-    <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12">
+    // Slightly tighter bottom padding so the next section (Casino Partners) tucks up and avoids a large visual gap.
+    <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <div className="lg:col-span-8">
           <Card className="glass p-6">
@@ -576,8 +577,8 @@ export default function Home() {
   ) : null;
 
   const casinosBlock = (
-    // Slightly tighter top padding so this section tucks under the block above without a large visual gap.
-    <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 pb-12">
+    // Pull this section upward a bit so it visually fills the area beneath the onboarding block.
+    <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-0 -mt-8 sm:-mt-10 pb-12">
       <div className="flex items-end justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-white">{casinosTitle}</h2>
