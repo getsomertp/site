@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Settings, Plus, Trash2, Edit, Save, X, ExternalLink, Trophy, Gift, Lock, Users, Search, DollarSign, Wallet, Image, Tv, LogIn, LogOut, Download, ScrollText, BadgeCheck, Loader2 } from "lucide-react";
+import { Settings, Plus, Trash2, Edit, Save, X, ExternalLink, Trophy, Gift, Lock, Users, Search, DollarSign, Wallet, Image, Tv, LogIn, LogOut, Download, ScrollText, BadgeCheck, Loader2, RefreshCcw } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +17,10 @@ import { useSeo } from "@/lib/seo";
 import { StreamEvents } from "@/components/StreamEvents";
 import { useToast } from "@/hooks/use-toast";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Slider } from "@/components/ui/slider";
 import { downloadCsv } from "@/lib/csv";
+import { clearClientCacheAndReload } from "@/lib/clearClientCache";
+import { clearClientCacheAndReload } from "@/lib/clearClientCache";
 import type { Casino, Giveaway, GiveawayRequirement, User, UserPayment, UserCasinoAccount, UserWallet } from "@shared/schema";
 
 // IMPORTANT: Don't import the Drizzle schema module (shared/schema.ts) into the browser bundle.
@@ -103,6 +106,28 @@ async function uploadSiteLogo(file: File): Promise<string> {
   const fd = new FormData();
   fd.append("logo", file);
   const res = await fetch("/api/admin/uploads/site-logo", {
+    method: "POST",
+    body: fd,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const txt = await res.text();
+    try {
+      const j = JSON.parse(txt);
+      throw new Error(j?.error || j?.message || "Upload failed");
+    } catch {
+      throw new Error(txt || "Upload failed");
+    }
+  }
+  const data = await res.json();
+  if (!data?.url) throw new Error("Upload failed: missing url");
+  return data.url as string;
+}
+
+async function uploadSiteBackground(file: File): Promise<string> {
+  const fd = new FormData();
+  fd.append("background", file);
+  const res = await fetch("/api/admin/uploads/site-background", {
     method: "POST",
     body: fd,
     credentials: "include",
@@ -330,7 +355,24 @@ const [auditSearch, setAuditSearch] = useState("");
   const [siteDiscordUrl, setSiteDiscordUrl] = useState("https://discord.gg/");
   const [siteBrandName, setSiteBrandName] = useState("GETSOME");
   const [siteBrandLogoUrl, setSiteBrandLogoUrl] = useState("");
+  const [sitePartnerEmail, setSitePartnerEmail] = useState("");
   const [uploadingSiteLogo, setUploadingSiteLogo] = useState(false);
+
+  // Theme
+  const [themeBgUrl, setThemeBgUrl] = useState("");
+  const [themeOverlay, setThemeOverlay] = useState(0.78);
+  const [themeAccent, setThemeAccent] = useState("#b026ff");
+  const [uploadingThemeBg, setUploadingThemeBg] = useState(false);
+
+  // Homepage stats
+  const [statsCommunityMode, setStatsCommunityMode] = useState<"users" | "discord" | "manual">("users");
+  const [statsDiscordGuildId, setStatsDiscordGuildId] = useState("");
+  const [statsCommunityManual, setStatsCommunityManual] = useState(0);
+  const [statsCommunityExtra, setStatsCommunityExtra] = useState(0);
+  const [statsGivenAwayExtra, setStatsGivenAwayExtra] = useState(0);
+  const [statsWinnersExtra, setStatsWinnersExtra] = useState(0);
+  const [statsLiveHoursManual, setStatsLiveHoursManual] = useState(0);
+  const [statsSnapshot, setStatsSnapshot] = useState<any | null>(null);
 
   // Leaderboards
   const [leaderboardDialogOpen, setLeaderboardDialogOpen] = useState(false);
@@ -373,6 +415,12 @@ const [auditSearch, setAuditSearch] = useState("");
     enabled: isAdminLike === true,
   });
 
+  const { data: siteStatsAdmin, isLoading: loadingSiteStats } = useQuery<any>({
+    queryKey: ["/api/admin/site/stats"],
+    queryFn: () => adminFetch("/api/admin/site/stats"),
+    enabled: isAdminLike === true,
+  });
+
 // Admin audit log
 const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAuditLog[]>({
   queryKey: ["/api/admin/audit", auditSearch],
@@ -386,7 +434,33 @@ const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAudi
     if (siteSettings?.discordUrl) setSiteDiscordUrl(siteSettings.discordUrl);
     if (siteSettings?.brandName) setSiteBrandName(siteSettings.brandName);
     if (siteSettings?.brandLogoUrl) setSiteBrandLogoUrl(siteSettings.brandLogoUrl);
+    if (siteSettings?.partnerEmail !== undefined) setSitePartnerEmail(siteSettings.partnerEmail || "");
+
+    if (siteSettings?.themeBackgroundUrl !== undefined) {
+      setThemeBgUrl(siteSettings.themeBackgroundUrl || "");
+    }
+    if (siteSettings?.themeOverlay !== undefined) {
+      const n = Number(String(siteSettings.themeOverlay || "").trim());
+      if (Number.isFinite(n)) {
+        const v = n > 1.2 ? n / 100 : n; // allow 78 (percent) or 0.78
+        setThemeOverlay(Math.max(0.4, Math.min(0.9, v)));
+      }
+    }
+    if (siteSettings?.themeAccent) setThemeAccent(siteSettings.themeAccent);
   }, [siteSettings]);
+
+  useEffect(() => {
+    const cfg = siteStatsAdmin?.config;
+    if (!cfg) return;
+    setStatsCommunityMode((cfg.communityMode || "users") as any);
+    setStatsDiscordGuildId(String(cfg.discordGuildId || ""));
+    setStatsCommunityManual(Number(cfg.communityManual || 0));
+    setStatsCommunityExtra(Number(cfg.communityExtra || 0));
+    setStatsGivenAwayExtra(Number(cfg.givenAwayExtra || 0));
+    setStatsWinnersExtra(Number(cfg.winnersExtra || 0));
+    setStatsLiveHoursManual(Number(cfg.liveHoursManual || 0));
+    setStatsSnapshot(siteStatsAdmin?.stats || null);
+  }, [siteStatsAdmin]);
 
   // Leaderboards
   const { data: leaderboards = [], isLoading: loadingLeaderboards } = useQuery<any[]>({
@@ -504,6 +578,23 @@ const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAudi
         method: "POST",
         body: JSON.stringify({ key: "discordUrl", value: siteDiscordUrl }),
       });
+      await adminFetch("/api/admin/site/settings", {
+        method: "POST",
+        body: JSON.stringify({ key: "partnerEmail", value: (sitePartnerEmail || "").trim() }),
+      });
+
+      await adminFetch("/api/admin/site/settings", {
+        method: "POST",
+        body: JSON.stringify({ key: "themeBackgroundUrl", value: themeBgUrl || "" }),
+      });
+      await adminFetch("/api/admin/site/settings", {
+        method: "POST",
+        body: JSON.stringify({ key: "themeOverlay", value: String(Math.round(themeOverlay * 100) / 100) }),
+      });
+      await adminFetch("/api/admin/site/settings", {
+        method: "POST",
+        body: JSON.stringify({ key: "themeAccent", value: themeAccent || "" }),
+      });
       return true;
     },
     onSuccess: () => {
@@ -512,6 +603,32 @@ const { data: auditLogs = [], isLoading: loadingAuditLogs } = useQuery<AdminAudi
       toast({ title: "Site settings saved" });
     },
     onError: (err: any) => toast({ title: "Failed to save site settings", description: err?.message || "Request failed", variant: "destructive" }),
+  });
+
+  const saveSiteStats = useMutation({
+    mutationFn: async () => {
+      const payload = {
+        communityMode: statsCommunityMode,
+        discordGuildId: statsDiscordGuildId,
+        communityManual: Number(statsCommunityManual || 0),
+        communityExtra: Number(statsCommunityExtra || 0),
+        givenAwayExtra: Number(statsGivenAwayExtra || 0),
+        winnersExtra: Number(statsWinnersExtra || 0),
+        liveHoursManual: Number(statsLiveHoursManual || 0),
+      };
+      return adminFetch("/api/admin/site/stats", {
+        method: "PUT",
+        body: JSON.stringify(payload),
+      });
+    },
+    onSuccess: (data: any) => {
+      setStatsSnapshot(data?.stats || null);
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/site/stats"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/site/stats"] });
+      toast({ title: "Stats saved" });
+    },
+    onError: (err: any) =>
+      toast({ title: "Failed to save stats", description: err?.message || "Request failed", variant: "destructive" }),
   });
 
   // Leaderboard mutations
@@ -914,7 +1031,7 @@ const deleteLeaderboard = useMutation({
                         <Label>Casino Logo</Label>
                         <div className="flex items-center gap-3">
                           {casinoForm.logo ? (
-                            <img src={casinoForm.logo} alt="Casino logo" className="w-12 h-12 rounded-xl object-cover border border-white/10" />
+                            <img loading="lazy" decoding="async" src={casinoForm.logo} alt="Casino logo" className="w-12 h-12 rounded-xl object-cover border border-white/10" />
                           ) : (
                             <div className="w-12 h-12 rounded-xl bg-white/10 border border-white/10 flex items-center justify-center text-white font-semibold">
                               {(casinoForm.name || "").slice(0, 2).toUpperCase()}
@@ -1155,7 +1272,7 @@ const deleteLeaderboard = useMutation({
                     <Card key={casino.id} className="glass p-6" data-testid={`admin-casino-${casino.id}`}>
                       <div className="flex items-center gap-4">
                         {casino.logo ? (
-                          <img
+                          <img loading="lazy" decoding="async"
                             src={casino.logo}
                             alt={`${casino.name} logo`}
                             className="w-14 h-14 rounded-xl object-cover border border-white/10 bg-white/5"
@@ -1742,7 +1859,7 @@ const deleteLeaderboard = useMutation({
                                   <div className="flex items-center gap-2 min-w-0">
                                     <div className="w-8 h-8 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white">
                                       {e.user?.discordAvatarUrl ? (
-                                        <img src={e.user.discordAvatarUrl} alt="" className="w-full h-full object-cover" />
+                                        <img loading="lazy" decoding="async" src={e.user.discordAvatarUrl} alt="" className="w-full h-full object-cover" />
                                       ) : (
                                         (e.user?.discordUsername || e.user?.kickUsername || "?")
                                           .slice(0, 1)
@@ -1993,8 +2110,17 @@ const deleteLeaderboard = useMutation({
 
         <div className="space-y-2 md:col-span-2">
           <Label>Mapping JSON</Label>
-          <Textarea rows={8} value={leaderboardForm.mappingJson} onChange={(e) => setLeaderboardForm((p) => ({ ...p, apiMappingJson: e.target.value }))} />
-          <p className="text-xs text-muted-foreground">Example: {{"itemsPath":"data.items","rankFieldPath":"rank","usernameFieldPath":"username","userIdFieldPath":"id","valueFieldPath":"value"}}</p>
+          <Textarea
+            rows={8}
+            value={leaderboardForm.apiMappingJson}
+            onChange={(e) => setLeaderboardForm((p) => ({ ...p, apiMappingJson: e.target.value }))}
+          />
+          <p className="text-xs text-muted-foreground">
+            Example:{" "}
+            <code className="rounded bg-muted px-1 py-0.5 font-mono text-[11px]">
+              {`{"itemsPath":"data.items","rankFieldPath":"rank","usernameFieldPath":"username","userIdFieldPath":"id","valueFieldPath":"value"}`}
+            </code>
+          </p>
         </div>
       </div>
 
@@ -2033,7 +2159,7 @@ const deleteLeaderboard = useMutation({
                     <Label>Header Logo</Label>
                     <div className="flex items-center gap-4">
                       {siteBrandLogoUrl ? (
-                        <img
+                        <img loading="lazy" decoding="async"
                           src={siteBrandLogoUrl}
                           alt="Site logo"
                           className="w-12 h-12 rounded-xl object-cover bg-white/5 border border-white/10"
@@ -2090,6 +2216,255 @@ const deleteLeaderboard = useMutation({
                     <Input value={siteDiscordUrl} onChange={(e) => setSiteDiscordUrl(e.target.value)} />
                   </div>
                 </div>
+
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Partner Contact Email</Label>
+                    <Input type="email" value={sitePartnerEmail} onChange={(e) => setSitePartnerEmail(e.target.value)} placeholder="partners@yourdomain.com" />
+                    <p className="text-xs text-muted-foreground">Used by the "Become a Partner" button.</p>
+                  </div>
+                </div>
+
+                <div className="mt-8 pt-6 border-t border-white/10">
+                  <h3 className="font-display text-xl text-white mb-2">Theme</h3>
+                  <p className="text-muted-foreground mb-6">Background + accents (applies site-wide).</p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-3">
+                      <Label>Background Image</Label>
+                      <div className="flex items-start gap-4">
+                        <div className="w-24 h-16 rounded-xl overflow-hidden border border-white/10 bg-white/5 shrink-0">
+                          <div className="w-full h-full bg-cover bg-center" style={{ backgroundImage: themeBgUrl ? `url(${themeBgUrl})` : "none" }} />
+                        </div>
+                        <div className="flex-1 space-y-2">
+                          <Input value={themeBgUrl} onChange={(e) => setThemeBgUrl(e.target.value)} placeholder="https://... (or upload below)" />
+                          <Input
+                            type="file"
+                            accept="image/*"
+                            disabled={uploadingThemeBg}
+                            onChange={async (e) => {
+                              const f = e.target.files?.[0];
+                              e.currentTarget.value = "";
+                              if (!f) return;
+                              setUploadingThemeBg(true);
+                              try {
+                                const url = await uploadSiteBackground(f);
+                                setThemeBgUrl(url);
+                                toast({ title: "Background uploaded" });
+                              } catch (err: any) {
+                                toast({ title: "Upload failed", description: err?.message || "Upload failed", variant: "destructive" });
+                              } finally {
+                                setUploadingThemeBg(false);
+                              }
+                            }}
+                          />
+                          <div className="flex items-center gap-2">
+                            <Button type="button" variant="outline" size="sm" onClick={() => setThemeBgUrl("")} disabled={uploadingThemeBg || !themeBgUrl}>
+                              Clear
+                            </Button>
+                            {uploadingThemeBg ? (
+                              <span className="text-xs text-muted-foreground">Uploading...</span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">WebP recommended (keeps size small)</span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-6">
+                      <div className="space-y-3">
+                        <Label>Overlay Darkness</Label>
+                        <div className="flex items-center gap-4">
+                          <Slider
+                            value={[Math.round(themeOverlay * 100)]}
+                            min={40}
+                            max={90}
+                            step={1}
+                            onValueChange={(v) => setThemeOverlay(Math.max(0.4, Math.min(0.9, (v?.[0] ?? 78) / 100)))}
+                          />
+                          <div className="w-14 text-right text-sm text-white/80 tabular-nums">{Math.round(themeOverlay * 100)}%</div>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Higher = darker background (better readability).</p>
+                      </div>
+
+                      <div className="space-y-3">
+                        <Label>Accent Color</Label>
+                        <div className="flex items-center gap-3">
+                          <Input type="color" value={themeAccent} onChange={(e) => setThemeAccent(e.target.value)} className="h-10 w-14 p-1" />
+                          <Input value={themeAccent} onChange={(e) => setThemeAccent(e.target.value)} className="font-mono" />
+                          <Button type="button" variant="outline" size="sm" onClick={() => setThemeAccent("#b026ff")}>
+                            Reset
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Controls primary buttons, focus rings, and glow accents.</p>
+                      </div>
+                    </div>
+                  </div>
+
+
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Partner Contact Email</Label>
+                    <Input type="email" value={sitePartnerEmail} onChange={(e) => setSitePartnerEmail(e.target.value)} placeholder="partners@yourdomain.com" />
+                    <p className="text-xs text-muted-foreground">Used by the "Become a Partner" button.</p>
+                  </div>
+                </div>
+                </div>
+
+                <div className="mt-8 pt-6 border-t border-white/10">
+                  <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mb-2">
+                    <h3 className="font-display text-xl text-white">Homepage Stats</h3>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => queryClient.invalidateQueries({ queryKey: ["/api/admin/site/stats"] })}
+                      disabled={loadingSiteStats}
+                    >
+                      Refresh
+                    </Button>
+                  </div>
+                  <p className="text-muted-foreground mb-6">
+                    These counters auto-sync from real data (users, giveaway winners, payment totals) with optional manual adjustments.
+                  </p>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Community source</Label>
+                        <Select value={statsCommunityMode} onValueChange={(v) => setStatsCommunityMode(v as any)}>
+                          <SelectTrigger className="bg-white/5">
+                            <SelectValue placeholder="Select source" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="users">Registered users (auto)</SelectItem>
+                            <SelectItem value="discord">Discord server (auto)</SelectItem>
+                            <SelectItem value="manual">Manual</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <p className="text-xs text-muted-foreground">
+                          Discord sync requires setting <span className="font-mono">DISCORD_BOT_TOKEN</span> in Railway.
+                        </p>
+                      </div>
+
+                      {statsCommunityMode === "discord" ? (
+                        <div className="space-y-2">
+                          <Label>Discord Guild ID</Label>
+                          <Input value={statsDiscordGuildId} onChange={(e) => setStatsDiscordGuildId(e.target.value)} placeholder="123456789012345678" />
+                        </div>
+                      ) : null}
+
+                      {statsCommunityMode === "manual" ? (
+                        <div className="space-y-2">
+                          <Label>Community (manual total)</Label>
+                          <Input type="number" value={String(statsCommunityManual)} onChange={(e) => setStatsCommunityManual(Number(e.target.value || 0))} />
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <Label>Community (manual adjustment)</Label>
+                          <Input type="number" value={String(statsCommunityExtra)} onChange={(e) => setStatsCommunityExtra(Number(e.target.value || 0))} />
+                          <p className="text-xs text-muted-foreground">Adds on top of the auto base.</p>
+                        </div>
+                      )}
+
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                        {loadingSiteStats ? (
+                          <div className="text-sm text-muted-foreground">Loading...</div>
+                        ) : (
+                          <div className="text-sm">
+                            <div className="flex items-center justify-between">
+                              <span className="text-muted-foreground">Community (current)</span>
+                              <span className="font-medium text-white">
+                                {Number(statsSnapshot?.community ?? statsSnapshot?.meta?.community?.total ?? 0).toLocaleString()}
+                              </span>
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-1">
+                              Source: {statsSnapshot?.meta?.community?.source || "-"}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label>Given Away (manual extra)</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          value={String(statsGivenAwayExtra)}
+                          onChange={(e) => setStatsGivenAwayExtra(Number(e.target.value || 0))}
+                        />
+                        <p className="text-xs text-muted-foreground">Adds on top of payment totals (Admin → Payments) and completed giveaway prize amounts (parsed from the giveaway prize field).</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Winners (manual extra)</Label>
+                        <Input type="number" value={String(statsWinnersExtra)} onChange={(e) => setStatsWinnersExtra(Number(e.target.value || 0))} />
+                        <p className="text-xs text-muted-foreground">Adds on top of giveaway winners.</p>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label>Live Hours (manual total)</Label>
+                        <Input type="number" value={String(statsLiveHoursManual)} onChange={(e) => setStatsLiveHoursManual(Number(e.target.value || 0))} />
+                      </div>
+
+                      <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+                        {loadingSiteStats ? (
+                          <div className="text-sm text-muted-foreground">Loading...</div>
+                        ) : (
+                          <div className="grid grid-cols-3 gap-3 text-sm">
+                            <div>
+                              <div className="text-muted-foreground">Given Away</div>
+                              <div className="font-medium text-white">${Number(statsSnapshot?.meta?.givenAway?.total ?? 0).toLocaleString()}</div>
+                            </div>
+                            <div>
+                              <div className="text-muted-foreground">Winners</div>
+                              <div className="font-medium text-white">{Number(statsSnapshot?.meta?.winners?.total ?? 0).toLocaleString()}</div>
+                            </div>
+                            <div>
+                              <div className="text-muted-foreground">Live Hours</div>
+                              <div className="font-medium text-white">{Number(statsSnapshot?.liveHours ?? statsSnapshot?.meta?.liveHours?.manual ?? 0).toLocaleString()}</div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end mt-6">
+                    <Button
+                      type="button"
+                      className="font-display bg-neon-cyan text-black"
+                      onClick={() => saveSiteStats.mutate()}
+                      disabled={saveSiteStats.isPending}
+                    >
+                      Save Stats
+                    </Button>
+                  </div>
+
+
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Partner Contact Email</Label>
+                    <Input type="email" value={sitePartnerEmail} onChange={(e) => setSitePartnerEmail(e.target.value)} placeholder="partners@yourdomain.com" />
+                    <p className="text-xs text-muted-foreground">Used by the "Become a Partner" button.</p>
+                  </div>
+                </div>
+                </div>
+
+                <div className="mt-8 pt-6 border-t border-white/10">
+                  <h3 className="font-display text-xl text-white mb-2">Troubleshooting</h3>
+                  <p className="text-muted-foreground mb-4">
+                    If the site ever looks blank after a deploy, this will clear browser cache storage and reload the app.
+                  </p>
+                  <Button type="button" variant="outline" className="gap-2" onClick={() => void clearClientCacheAndReload()}>
+                    <RefreshCcw className="w-4 h-4" />
+                    Clear client cache & reload
+                  </Button>
+                </div>
+
                 <div className="flex justify-end mt-6">
                   <Button className="font-display bg-neon-cyan text-black" onClick={() => saveSiteSettings.mutate()} disabled={saveSiteSettings.isPending}>
                     Save Settings
@@ -2286,7 +2661,7 @@ function VerificationsTab() {
                       <div className="flex items-start gap-3 min-w-0">
                         <div className="w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white shrink-0">
                           {discordAvatarUrl(a.user) ? (
-                            <img src={discordAvatarUrl(a.user)!} alt="" className="w-full h-full object-cover" />
+                            <img loading="lazy" decoding="async" src={discordAvatarUrl(a.user)!} alt="" className="w-full h-full object-cover" />
                           ) : (
                             (a.user.discordUsername || a.user.kickUsername || "?").slice(0, 1).toUpperCase()
                           )}
@@ -2344,7 +2719,7 @@ function VerificationsTab() {
                       <div className="flex items-start gap-3 min-w-0">
                         <div className="w-10 h-10 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white shrink-0">
                           {discordAvatarUrl(w.user) ? (
-                            <img src={discordAvatarUrl(w.user)!} alt="" className="w-full h-full object-cover" />
+                            <img loading="lazy" decoding="async" src={discordAvatarUrl(w.user)!} alt="" className="w-full h-full object-cover" />
                           ) : (
                             (w.user.discordUsername || w.user.kickUsername || "?").slice(0, 1).toUpperCase()
                           )}
@@ -2516,7 +2891,7 @@ function PlayersTab({ casinos, canManagePayments }: { casinos: Casino[]; canMana
                   >
                     <div className="flex items-center gap-3">
                       {user.discordAvatar ? (
-                        <img 
+                        <img loading="lazy" decoding="async" 
                           src={`https://cdn.discordapp.com/avatars/${user.discordId}/${user.discordAvatar}.png`} 
                           alt="" 
                           className="w-10 h-10 rounded-full"
@@ -2553,7 +2928,7 @@ function PlayersTab({ casinos, canManagePayments }: { casinos: Casino[]; canMana
               <div className="space-y-6">
                 <div className="flex items-center gap-4 pb-4 border-b border-white/10">
                   {userDetails.user.discordAvatar ? (
-                    <img 
+                    <img loading="lazy" decoding="async" 
                       src={`https://cdn.discordapp.com/avatars/${userDetails.user.discordId}/${userDetails.user.discordAvatar}.png`} 
                       alt="" 
                       className="w-16 h-16 rounded-full"

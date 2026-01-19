@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useCallback, useDeferredValue, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, Trash2, Play, Lock, Swords, Target, DollarSign, Check, X, Crown, User, Search, Download } from "lucide-react";
 import { Card } from "@/components/ui/card";
@@ -34,9 +34,20 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
   const [payoutEntryId, setPayoutEntryId] = useState<number | null>(null);
   const [payoutAmount, setPayoutAmount] = useState("");
 
+  const handleTabChange = useCallback((v: string) => {
+    // Close any open dialogs when switching tabs to prevent accidental re-open
+    setCreateDialogOpen(false);
+    setEntryDialogOpen(false);
+    setPayoutEntryId(null);
+    setActiveGame(v);
+    setSelectedEventId(null);
+  }, []);
+
   // Pro pass: quick filters + export
   const [eventSearch, setEventSearch] = useState("");
   const [eventStatusFilter, setEventStatusFilter] = useState<"all" | "draft" | "open" | "locked" | "in_progress" | "finished">("all");
+  const deferredSearch = useDeferredValue(eventSearch);
+
 
   const [newEventForm, setNewEventForm] = useState({
     title: "",
@@ -55,17 +66,20 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
     queryFn: () => adminFetch("/api/admin/stream-events"),
   });
 
-  const filteredEvents = events
-    .filter((e) => e.type === activeGame)
-    .filter((e) => (eventStatusFilter === "all" ? true : e.status === eventStatusFilter))
-    .filter((e) => {
-      const q = eventSearch.trim().toLowerCase();
-      if (!q) return true;
-      return String(e.title || "").toLowerCase().includes(q) || String(e.id).includes(q);
-    })
-    .slice()
-    .sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
-  const selectedEvent = events.find((e) => e.id === selectedEventId);
+  const filteredEvents = useMemo(() => {
+    const q = deferredSearch.trim().toLowerCase();
+    return events
+      .filter((e) => e.type === activeGame)
+      .filter((e) => (eventStatusFilter === "all" ? true : e.status === eventStatusFilter))
+      .filter((e) => {
+        if (!q) return true;
+        return String(e.title || "").toLowerCase().includes(q) || String(e.id).includes(q);
+      })
+      .slice()
+      .sort((a, b) => (b.id ?? 0) - (a.id ?? 0));
+  }, [events, activeGame, eventStatusFilter, deferredSearch]);
+
+  const selectedEvent = useMemo(() => events.find((e) => e.id === selectedEventId), [events, selectedEventId]);
 
   const exportEntriesCsv = (event: StreamEventWithDetails) => {
     const rows = (event.entries || []).map((e: any) => ({
@@ -277,7 +291,7 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
     },
   });
 
-  const getStatusBadgeColor = (status: string) => {
+  const getStatusBadgeColor = useCallback((status: string) => {
     switch (status) {
       case "draft": return "bg-gray-500/20 text-gray-400";
       case "open": return "bg-green-500/20 text-green-400";
@@ -286,7 +300,35 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
       case "completed": return "bg-purple-500/20 text-purple-400";
       default: return "bg-gray-500/20 text-gray-400";
     }
-  };
+  }, []);
+
+  const sidebarEventsList = useMemo(() => {
+    const emptyText = activeGame === "tournament" ? "No tournaments yet" : activeGame === "bonus_hunt" ? "No bonus hunts yet" : "No events yet";
+    if (filteredEvents.length === 0) {
+      return <p className="text-muted-foreground text-sm text-center py-4">{emptyText}</p>;
+    }
+    const selectedStyle = activeGame === "tournament" ? "bg-neon-purple/20 border-neon-purple/50" : activeGame === "bonus_hunt" ? "bg-neon-gold/20 border-neon-gold/50" : "bg-white/10 border-white/20";
+    return filteredEvents.map((event) => (
+      <Card
+        key={event.id}
+        className={`p-3 cursor-pointer transition-colors ${
+          selectedEventId === event.id ? selectedStyle : "bg-white/5 hover:bg-white/10"
+        }`}
+        onClick={() => setSelectedEventId(event.id)}
+        data-testid={`event-card-${event.id}`}
+      >
+        <div className="flex items-center justify-between">
+          <div className="truncate flex-1">
+            <div className="font-medium truncate">{event.title}</div>
+            {activeGame === "bonus_hunt" && (
+              <div className="text-xs text-muted-foreground">${parseFloat(event.startingBalance || "0").toFixed(2)}</div>
+            )}
+          </div>
+          <Badge className={getStatusBadgeColor(event.status)}>{event.status}</Badge>
+        </div>
+      </Card>
+    ));
+  }, [activeGame, filteredEvents, getStatusBadgeColor, selectedEventId]);
 
   const renderTournamentBracket = (event: StreamEventWithDetails) => {
     const brackets = event.brackets;
@@ -519,7 +561,7 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
 
   return (
     <div className="space-y-6">
-      <Tabs value={activeGame} onValueChange={setActiveGame}>
+      <Tabs value={activeGame} onValueChange={handleTabChange}>
         <TabsList className="grid w-full grid-cols-3 bg-card/50">
           <TabsTrigger value="tournament" className="font-display" data-testid="tab-tournament">
             <Swords className="w-4 h-4 mr-2" /> Tournament
@@ -532,6 +574,7 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
           </TabsTrigger>
         </TabsList>
 
+        {activeGame === "tournament" && (
         <TabsContent value="tournament" className="mt-6">
           <div className="flex gap-6">
             <Card className="w-72 bg-card/50 p-4">
@@ -615,27 +658,7 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
               </div>
 
               <div className="space-y-2">
-                {filteredEvents.map((event) => (
-                  <Card
-                    key={event.id}
-                    className={`p-3 cursor-pointer transition-colors ${
-                      selectedEventId === event.id ? "bg-neon-purple/20 border-neon-purple/50" : "bg-white/5 hover:bg-white/10"
-                    }`}
-                    onClick={() => setSelectedEventId(event.id)}
-                    data-testid={`event-card-${event.id}`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="truncate flex-1">
-                        <div className="font-medium truncate">{event.title}</div>
-                        <div className="text-xs text-muted-foreground">{event.maxPlayers} players</div>
-                      </div>
-                      <Badge className={getStatusBadgeColor(event.status)}>{event.status}</Badge>
-                    </div>
-                  </Card>
-                ))}
-                {filteredEvents.length === 0 && (
-                  <p className="text-muted-foreground text-sm text-center py-4">No tournaments yet</p>
-                )}
+                {sidebarEventsList}
               </div>
             </Card>
 
@@ -821,7 +844,9 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
             </Card>
           </div>
         </TabsContent>
+        )}
 
+        {activeGame === "bonus_hunt" && (
         <TabsContent value="bonus_hunt" className="mt-6">
           <div className="flex gap-6">
             <Card className="w-72 bg-card/50 p-4">
@@ -899,29 +924,7 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
               </div>
 
               <div className="space-y-2">
-                {filteredEvents.map((event) => (
-                  <Card
-                    key={event.id}
-                    className={`p-3 cursor-pointer transition-colors ${
-                      selectedEventId === event.id ? "bg-neon-gold/20 border-neon-gold/50" : "bg-white/5 hover:bg-white/10"
-                    }`}
-                    onClick={() => setSelectedEventId(event.id)}
-                    data-testid={`event-card-${event.id}`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <div className="truncate flex-1">
-                        <div className="font-medium truncate">{event.title}</div>
-                        <div className="text-xs text-muted-foreground">
-                          ${parseFloat(event.startingBalance || "0").toFixed(2)}
-                        </div>
-                      </div>
-                      <Badge className={getStatusBadgeColor(event.status)}>{event.status}</Badge>
-                    </div>
-                  </Card>
-                ))}
-                {filteredEvents.length === 0 && (
-                  <p className="text-muted-foreground text-sm text-center py-4">No bonus hunts yet</p>
-                )}
+                {sidebarEventsList}
               </div>
             </Card>
 
@@ -1071,7 +1074,9 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
             </Card>
           </div>
         </TabsContent>
+        )}
 
+        {activeGame === "guess_balance" && (
         <TabsContent value="guess_balance" className="mt-6">
           <Card className="bg-card/50 p-12">
             <div className="text-center">
@@ -1081,6 +1086,7 @@ export function StreamEvents({ adminFetch }: StreamEventsProps) {
             </div>
           </Card>
         </TabsContent>
+        )}
       </Tabs>
     </div>
   );

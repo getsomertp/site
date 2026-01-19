@@ -30,7 +30,11 @@ const buttonVariants = cva(
       },
       size: {
         default: "min-h-9 px-4 py-2",
-        sm: "min-h-8 rounded-md px-3 text-xs",
+        // sm is used heavily in tight UIs (cards/tables). Add light vertical padding
+        // to avoid occasional font-metric clipping and keep labels centered.
+        sm: "min-h-8 rounded-md px-3 py-1.5 text-xs",
+        // pill is used for compact, premium CTA rows (partners, tables)
+        pill: "min-h-9 rounded-full px-3 py-2 text-xs",
         lg: "min-h-10 rounded-lg px-8",
         icon: "h-9 w-9 rounded-lg",
       },

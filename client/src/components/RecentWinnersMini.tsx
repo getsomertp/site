@@ -70,7 +70,7 @@ export function RecentWinnersMini({ limit = 3 }: { limit?: number }) {
             <div key={w.id} className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-3 min-w-0">
                 {avatar ? (
-                  <img
+                  <img loading="lazy" decoding="async"
                     src={avatar}
                     alt=""
                     className="w-8 h-8 rounded-full border border-white/10"

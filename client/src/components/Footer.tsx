@@ -7,6 +7,7 @@ import { getQueryFn } from "@/lib/queryClient";
 import { normalizeExternalUrl } from "@/lib/url";
 import { RecentWinnersMini } from "@/components/RecentWinnersMini";
 import { GiveawayRulesModal } from "@/components/GiveawayRulesModal";
+import { clearClientCacheAndReload } from "@/lib/clearClientCache";
 
 type SiteSettingRow = { key: string; value: string };
 type SiteSettingsMap = Record<string, string>;
@@ -123,7 +124,16 @@ export function Footer() {
               <div className="mt-2">
                 Partner links may be affiliate links. By using them you may support the stream at no extra cost.
               </div>
-              <div className="mt-4 text-white/40">© {new Date().getFullYear()} GETSOME</div>
+              <div className="mt-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-white/40">
+                <div>© {new Date().getFullYear()} GETSOME</div>
+                <button
+                  type="button"
+                  className="text-white/40 hover:text-white underline underline-offset-4 w-fit"
+                  onClick={() => void clearClientCacheAndReload()}
+                >
+                  Clear cache & reload
+                </button>
+              </div>
             </div>
           </Card>
         </motion.div>

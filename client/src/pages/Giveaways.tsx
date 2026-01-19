@@ -538,7 +538,7 @@ export default function Giveaways() {
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 rounded-full bg-white/10 overflow-hidden flex items-center justify-center text-xs text-white">
                         {winner.avatar ? (
-                          <img src={winner.avatar} alt="" className="w-full h-full object-cover" />
+                          <img loading="lazy" decoding="async" src={winner.avatar} alt="" className="w-full h-full object-cover" />
                         ) : (
                           <span>🏆</span>
                         )}

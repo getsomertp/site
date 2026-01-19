@@ -1,7 +1,8 @@
 import { motion } from "framer-motion";
 import { useMemo, useState } from "react";
+import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Building2, ExternalLink, Search, Trophy, Gift } from "lucide-react";
+import { Building2, ExternalLink, Search, Trophy, Gift, ChevronRight } from "lucide-react";
 import { Navigation } from "@/components/Navigation";
 import { Footer } from "@/components/Footer";
 import { Card } from "@/components/ui/card";
@@ -102,7 +103,7 @@ export default function Partners() {
                     <Card className="glass p-6">
                       <div className="flex items-center gap-3">
                         {c.logo ? (
-                          <img
+                          <img loading="lazy" decoding="async"
                             src={c.logo}
                             alt={`${c.name} logo`}
                             className="w-12 h-12 rounded-2xl object-cover bg-white/5"
@@ -113,7 +114,18 @@ export default function Partners() {
                           </div>
                         )}
                         <div className="min-w-0">
-                          <div className="text-white font-semibold text-lg truncate">{c.name}</div>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Link href={`/partners/${c.slug}`}>
+                              <span className="text-white font-semibold text-lg truncate hover:text-white/90 cursor-pointer">
+                                {c.name}
+                              </span>
+                            </Link>
+                            <Link href={`/partners/${c.slug}`}>
+                              <span className="text-white/50 hover:text-white cursor-pointer flex items-center" aria-label="View partner">
+                                <ChevronRight className="w-4 h-4" />
+                              </span>
+                            </Link>
+                          </div>
                           <div className="text-sm text-muted-foreground line-clamp-1">
                             {c.bonusText || c.welcomeBonus || "Exclusive bonuses available"}
                           </div>
@@ -121,27 +133,27 @@ export default function Partners() {
                       </div>
 
                       <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <Button variant="outline" size="sm" asChild className="w-full">
+                        <Button variant="outline" size="pill" asChild className="w-full">
                           <a href={lbUrl}>
                             <Trophy className="w-4 h-4" />
                             <span>Leaderboard</span>
                           </a>
                         </Button>
-                        <Button variant="outline" size="sm" asChild className="w-full">
+                        <Button variant="outline" size="pill" asChild className="w-full">
                           <a href="/giveaways">
                             <Gift className="w-4 h-4" />
                             <span>Giveaways</span>
                           </a>
                         </Button>
                         {playUrl ? (
-                          <Button asChild className="w-full">
+                          <Button asChild size="pill" className="w-full">
                             <a href={playUrl} target="_blank" rel="noreferrer noopener">
                               <span>Play</span>
                               <ExternalLink className="w-4 h-4" />
                             </a>
                           </Button>
                         ) : (
-                          <Button className="w-full" disabled>
+                          <Button size="pill" className="w-full" disabled>
                             No link
                           </Button>
                         )}

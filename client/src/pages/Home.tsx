@@ -1,4 +1,5 @@
 import { motion } from "framer-motion";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getQueryFn } from "@/lib/queryClient";
 import { Trophy, Gift, Users, Zap, ExternalLink, Building2, Crown } from "lucide-react";
@@ -10,11 +11,12 @@ import { Footer } from "@/components/Footer";
 import { GiveawayRulesModal } from "@/components/GiveawayRulesModal";
 import { EmptyState } from "@/components/EmptyState";
 import { SkeletonGrid } from "@/components/SkeletonBlocks";
-import heroBg from "@assets/generated_images/dark_neon_casino_background.png";
+import { RecentWinnersMini } from "@/components/RecentWinnersMini";
 import { normalizeExternalUrl } from "@/lib/url";
 import { useSession } from "@/hooks/useSession";
 import { useToast } from "@/hooks/use-toast";
 import { useSeo } from "@/lib/seo";
+import { useCountUp } from "@/hooks/useCountUp";
 import type { Giveaway, GiveawayRequirement } from "@shared/schema";
 
 type Casino = {
@@ -82,11 +84,6 @@ function formatTimeRemaining(endsAt: Date | string): string {
 }
 
 export default function Home() {
-  useSeo({
-    title: "Stream Hub",
-    description: "Live giveaways, partner leaderboards, and stream games — connect with Discord and join the community.",
-    path: "/",
-  });
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: session } = useSession();
@@ -171,6 +168,22 @@ export default function Home() {
     queryFn: getQueryFn({ on401: "returnNull" }),
   });
 
+  const { data: siteStats, isLoading: statsLoading } = useQuery<any>({
+    queryKey: ["/api/site/stats"],
+    queryFn: getQueryFn({ on401: "returnNull" }),
+  });
+
+  // Start the count-up animation once when stats load.
+  const didAnimateStats = useRef(false);
+  const [animateStats, setAnimateStats] = useState(false);
+  useEffect(() => {
+    if (didAnimateStats.current) return;
+    if (!statsLoading && siteStats) {
+      didAnimateStats.current = true;
+      setAnimateStats(true);
+    }
+  }, [statsLoading, siteStats]);
+
   // Guard against null (e.g., if a proxy/auth layer returns 401).
   const siteSettings = (siteSettingsRaw as any) || {};
 
@@ -185,15 +198,28 @@ export default function Home() {
   const activeGiveaways = (giveaways || []).slice(0, 3);
   const showNoGiveaways = !giveawaysLoading && activeGiveaways.length === 0;
 
+  const featuredGiveaway = (giveaways || [])[0] as GiveawayWithDetails | undefined;
+
 
   const brandName = siteSettings.brandName || "GETSOME";
   const kickUrl = siteSettings.kickUrl || "https://kick.com/get-some";
   const discordUrl = siteSettings.discordUrl || "https://discord.gg/";
 
-  const communityMembers = Number(siteSettings.communityMembers || 0);
-  const totalGivenAway = Number(siteSettings.totalGivenAway || 0);
-  const totalWinners = Number(siteSettings.totalWinners || 0);
-  const liveHours = Number(siteSettings.liveHours || 0);
+  useSeo({
+    title: String(brandName || "GETSOME"),
+    description: "Live giveaways, leaderboards, and stream games — all in one place.",
+    path: "/",
+  });
+
+  const communityMembers = Number(siteStats?.community || 0);
+  const totalGivenAway = Number(siteStats?.givenAway || 0);
+  const totalWinners = Number(siteStats?.winners || 0);
+  const liveHours = Number(siteStats?.liveHours || 0);
+
+  const communityAnim = useCountUp(communityMembers, { start: animateStats, durationMs: 1200 });
+  const givenAwayAnim = useCountUp(totalGivenAway, { start: animateStats, durationMs: 1300 });
+  const winnersAnim = useCountUp(totalWinners, { start: animateStats, durationMs: 1200 });
+  const liveHoursAnim = useCountUp(liveHours, { start: animateStats, durationMs: 1200 });
 
   const hasLeaderboard = Boolean(homeLb && (homeLb.casino || (homeLb as any)?.casino));
   const lbCasino = (homeLb as any)?.casino;
@@ -201,15 +227,12 @@ export default function Home() {
   const casinoLink = casinoSlug ? `/leaderboard?casino=${encodeURIComponent(casinoSlug)}` : undefined;
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen text-foreground">
       <Navigation />
 
       {/* Hero */}
       <section className="relative overflow-hidden">
-        <div className="absolute inset-0">
-          <img src={heroBg} className="w-full h-full object-cover opacity-40" />
-          <div className="absolute inset-0 bg-gradient-to-b from-background/60 via-background/80 to-background" />
-        </div>
+        <div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/25 to-black/55" />
 
         <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-20 pb-14">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
@@ -225,12 +248,16 @@ export default function Home() {
                 Live giveaways, leaderboards, and stream games — all in one place.
               </p>
               <div className="mt-8 flex flex-wrap gap-3">
-                <Button asChild>
+                <Button asChild className="font-display bg-gradient-to-r from-neon-purple to-neon-pink text-white">
                   <a href={kickUrl} target="_blank" rel="noreferrer">
                     Watch Live <ExternalLink className="ml-2 w-4 h-4" />
                   </a>
                 </Button>
-                <Button variant="outline" asChild>
+                <Button
+                  variant="outline"
+                  asChild
+                  className="font-display border-white/20 hover:bg-white/5"
+                >
                   <a href={discordUrl} target="_blank" rel="noreferrer">
                     Join Discord <ExternalLink className="ml-2 w-4 h-4" />
                   </a>
@@ -249,10 +276,10 @@ export default function Home() {
                 <Users className="w-5 h-5" />
                 <div>
                   <div className="text-sm text-muted-foreground">Community</div>
-                  {settingsLoading ? (
+                  {statsLoading ? (
                     <Skeleton className="h-7 w-20" />
                   ) : (
-                    <div className="text-2xl font-bold">{communityMembers.toLocaleString()}</div>
+                    <div className="text-2xl font-bold tabular-nums">{communityAnim.toLocaleString()}+</div>
                   )}
                 </div>
               </div>
@@ -262,10 +289,10 @@ export default function Home() {
                 <Gift className="w-5 h-5" />
                 <div>
                   <div className="text-sm text-muted-foreground">Given Away</div>
-                  {settingsLoading ? (
+                  {statsLoading ? (
                     <Skeleton className="h-7 w-24" />
                   ) : (
-                    <div className="text-2xl font-bold">{formatMoney(totalGivenAway)}</div>
+                    <div className="text-2xl font-bold tabular-nums">{formatMoney(givenAwayAnim)}+</div>
                   )}
                 </div>
               </div>
@@ -275,10 +302,10 @@ export default function Home() {
                 <Trophy className="w-5 h-5" />
                 <div>
                   <div className="text-sm text-muted-foreground">Winners</div>
-                  {settingsLoading ? (
+                  {statsLoading ? (
                     <Skeleton className="h-7 w-16" />
                   ) : (
-                    <div className="text-2xl font-bold">{totalWinners.toLocaleString()}</div>
+                    <div className="text-2xl font-bold tabular-nums">{winnersAnim.toLocaleString()}+</div>
                   )}
                 </div>
               </div>
@@ -288,16 +315,143 @@ export default function Home() {
                 <Zap className="w-5 h-5" />
                 <div>
                   <div className="text-sm text-muted-foreground">Live Hours</div>
-                  {settingsLoading ? (
+                  {statsLoading ? (
                     <Skeleton className="h-7 w-14" />
                   ) : (
-                    <div className="text-2xl font-bold">{liveHours.toLocaleString()}</div>
+                    <div className="text-2xl font-bold tabular-nums">{liveHoursAnim.toLocaleString()}+</div>
                   )}
                 </div>
               </div>
             </Card>
           </div>
+
+
         </div>
+      </section>
+
+      {/* Quick start */}
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
+          <div className="lg:col-span-8">
+            <Card className="glass p-6">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-white font-display font-bold text-xl">Everything in one hub</div>
+                  <div className="text-white/60 text-sm mt-1">
+                    Giveaways, leaderboards, partners, and stream games — built for speed and mobile.
+                  </div>
+                </div>
+                <Button size="pill" asChild>
+                  <a href="/giveaways">Browse Giveaways</a>
+                </Button>
+              </div>
+
+              <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                <a href="/giveaways" className="rounded-xl border border-white/10 bg-white/5 p-4 hover:bg-white/10 transition-colors">
+                  <div className="flex items-center gap-2 text-white">
+                    <Gift className="w-4 h-4 text-neon-pink" />
+                    <span className="font-display font-bold">Giveaways</span>
+                  </div>
+                  <div className="text-xs text-white/60 mt-1">Provably-fair draws, live on stream.</div>
+                </a>
+                <a href="/leaderboard" className="rounded-xl border border-white/10 bg-white/5 p-4 hover:bg-white/10 transition-colors">
+                  <div className="flex items-center gap-2 text-white">
+                    <Trophy className="w-4 h-4 text-neon-gold" />
+                    <span className="font-display font-bold">Leaderboards</span>
+                  </div>
+                  <div className="text-xs text-white/60 mt-1">Track prize pools and top players.</div>
+                </a>
+                <a href="/partners" className="rounded-xl border border-white/10 bg-white/5 p-4 hover:bg-white/10 transition-colors">
+                  <div className="flex items-center gap-2 text-white">
+                    <Building2 className="w-4 h-4 text-neon-cyan" />
+                    <span className="font-display font-bold">Partners</span>
+                  </div>
+                  <div className="text-xs text-white/60 mt-1">Official links, codes, and perks.</div>
+                </a>
+                <a href="/stream-games" className="rounded-xl border border-white/10 bg-white/5 p-4 hover:bg-white/10 transition-colors">
+                  <div className="flex items-center gap-2 text-white">
+                    <Crown className="w-4 h-4 text-neon-purple" />
+                    <span className="font-display font-bold">Stream Games</span>
+                  </div>
+                  <div className="text-xs text-white/60 mt-1">Join live events and bonus hunts.</div>
+                </a>
+              </div>
+            </Card>
+          </div>
+
+          <div className="lg:col-span-4">
+            <Card className="glass p-6">
+              <div className="text-white font-display font-bold text-xl">New here?</div>
+              <div className="text-white/60 text-sm mt-1">Get verified once, then enter in seconds.</div>
+
+              <div className="mt-4 space-y-3">
+                <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                  <div className="text-xs uppercase tracking-wider text-white/60">Step 1</div>
+                  <div className="text-white font-semibold">Connect Discord</div>
+                  <div className="text-xs text-white/60 mt-1">Unlock entries + account linking.</div>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                  <div className="text-xs uppercase tracking-wider text-white/60">Step 2</div>
+                  <div className="text-white font-semibold">Link partner account</div>
+                  <div className="text-xs text-white/60 mt-1">Some giveaways require a linked account.</div>
+                </div>
+                <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                  <div className="text-xs uppercase tracking-wider text-white/60">Step 3</div>
+                  <div className="text-white font-semibold">Upload wallet proof</div>
+                  <div className="text-xs text-white/60 mt-1">Fast verification for payouts.</div>
+                </div>
+              </div>
+
+              <div className="mt-4">
+                <Button size="pill" className="w-full" asChild>
+                  <a href="/profile">Complete profile</a>
+                </Button>
+              </div>
+            </Card>
+          </div>
+        </div>
+
+        {/* Featured giveaway strip */}
+        {!giveawaysLoading && featuredGiveaway ? (
+          <div className="mt-4">
+            <Card className="glass p-5">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+                <div className="min-w-0">
+                  <div className="text-xs uppercase tracking-wider text-white/60">Live giveaway</div>
+                  <div className="text-white font-display font-bold text-lg truncate">{featuredGiveaway.title}</div>
+                  <div className="text-sm text-white/70 mt-1">
+                    <span className="text-neon-gold font-display font-bold">{featuredGiveaway.prize}</span>
+                    <span className="mx-2 text-white/35">•</span>
+                    Ends in {formatTimeRemaining(featuredGiveaway.endsAt as any)}
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <Button variant="outline" size="pill" asChild>
+                    <a href="/giveaways">View details</a>
+                  </Button>
+                  {!isLoggedIn ? (
+                    <Button size="pill" onClick={beginDiscordLogin}>Connect Discord</Button>
+                  ) : (featuredGiveaway as any).hasEntered ? (
+                    <Button size="pill" variant="secondary" disabled>Already entered</Button>
+                  ) : requirementMet((featuredGiveaway as any).requirements || []) ? (
+                    <Button
+                      size="pill"
+                      disabled={enterGiveaway.isPending}
+                      onClick={() => enterGiveaway.mutate((featuredGiveaway as any).id)}
+                    >
+                      {enterGiveaway.isPending ? "Entering..." : "Enter now"}
+                    </Button>
+                  ) : (
+                    <Button size="pill" variant="outline" asChild>
+                      <a href="/profile">Complete requirements</a>
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </Card>
+          </div>
+        ) : null}
       </section>
 
       {/* Casinos */}
@@ -328,7 +482,7 @@ export default function Home() {
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     {c.logo ? (
-                      <img
+                      <img loading="lazy" decoding="async"
                         src={c.logo}
                         alt={`${c.name} logo`}
                         className="w-10 h-10 rounded-xl object-cover"
@@ -339,7 +493,9 @@ export default function Home() {
                       </div>
                     )}
                     <div>
-                      <div className="text-white font-semibold">{c.name}</div>
+                      <a href={`/partners/${c.slug}`} className="text-white font-semibold hover:text-white/90">
+                        {c.name}
+                      </a>
                       <div className="text-sm text-muted-foreground">
                         {c.bonusText || c.welcomeBonus || "Exclusive bonuses available"}
                       </div>
@@ -367,21 +523,23 @@ export default function Home() {
 
       {/* Giveaways */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-12">
-        <div className="flex items-end justify-between gap-4">
-          <div>
-            <h2 className="text-2xl font-bold text-white">Giveaways</h2>
-            <p className="text-muted-foreground">Active giveaways running on stream.</p>
-          </div>
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+          <div className="lg:col-span-8">
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <h2 className="text-2xl font-bold text-white">Giveaways</h2>
+                <p className="text-muted-foreground">Active giveaways running on stream.</p>
+              </div>
 
-          <div className="flex items-center gap-2">
-            <GiveawayRulesModal variant="outline" className="border-white/15 text-white hover:bg-white/5" />
-            <Button variant="outline" asChild>
-              <a href="/giveaways">View All</a>
-            </Button>
-          </div>
-        </div>
+              <div className="flex items-center gap-2">
+                <GiveawayRulesModal variant="outline" className="border-white/15 text-white hover:bg-white/5" />
+                <Button variant="outline" asChild>
+                  <a href="/giveaways">View All</a>
+                </Button>
+              </div>
+            </div>
 
-        <div className="mt-6">
+            <div className="mt-6">
           {giveawaysLoading ? (
             <SkeletonGrid count={3} />
           ) : showNoGiveaways ? (
@@ -453,6 +611,12 @@ export default function Home() {
               ))}
             </div>
           )}
+            </div>
+          </div>
+
+          <div className="lg:col-span-4">
+            <RecentWinnersMini limit={4} />
+          </div>
         </div>
       </section>
 
