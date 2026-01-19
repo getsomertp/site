@@ -7,6 +7,7 @@ const router = Router();
 
 router.get("/leaderboard", async (_req, res) => {
   try {
+    res.setHeader("Cache-Control", "public, max-age=15, stale-while-revalidate=120");
     const period = "monthly";
 
     const result = await db.execute(sql`
@@ -17,7 +18,9 @@ router.get("/leaderboard", async (_req, res) => {
       WHERE l.period_type = ${period}
         AND l.is_active = true
       GROUP BY c.id
-      ORDER BY SUM(le.wagered) DESC
+      -- leaderboard_entries stores the numeric ranking metric in value.
+      -- Older code referenced a non-existent wagered column, which breaks on fresh DBs.
+      ORDER BY SUM(le.value) DESC
       LIMIT 1
     `);
 

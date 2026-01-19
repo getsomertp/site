@@ -46,6 +46,7 @@ export const users = pgTable("users", {
   kickUsername: text("kick_username"),
   kickVerified: boolean("kick_verified").notNull().default(false),
   isAdmin: boolean("is_admin").notNull().default(false),
+  role: text("role").notNull().default("user"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -119,6 +120,15 @@ export const giveaways = pgTable("giveaways", {
   casinoId: integer("casino_id").references(() => casinos.id, { onDelete: "set null" }),
   endsAt: timestamp("ends_at").notNull(),
   winnerId: varchar("winner_id").references(() => users.id),
+  winnerPickedAt: timestamp("winner_picked_at"),
+  winnerPickedBy: text("winner_picked_by"),
+  winnerSeed: text("winner_seed"),
+  // Provably-fair commitment (seed is hidden until reveal)
+  pfSeed: text("pf_seed"),
+  pfSeedHash: text("pf_seed_hash"),
+  pfEntriesHash: text("pf_entries_hash"),
+  pfWinnerEntryId: integer("pf_winner_entry_id"),
+  pfWinnerIndex: integer("pf_winner_index"),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -158,6 +168,23 @@ export const giveawayEntriesRelations = relations(giveawayEntries, ({ one }) => 
   user: one(users, { fields: [giveawayEntries.userId], references: [users.id] }),
 }));
 
+
+
+// Admin Audit Logs - records important admin actions for traceability
+export const adminAuditLogs = pgTable("admin_audit_logs", {
+  id: serial("id").primaryKey(),
+  action: text("action").notNull(),
+  entityType: text("entity_type"),
+  entityId: text("entity_id"),
+  details: text("details"),
+  actorUserId: varchar("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+  actorRole: text("actor_role"),
+  actorLabel: text("actor_label"),
+  ip: text("ip"),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 // Leaderboard cache
 export const leaderboardCache = pgTable("leaderboard_cache", {
   id: serial("id").primaryKey(),
@@ -172,6 +199,31 @@ export const siteSettings = pgTable("site_settings", {
   id: serial("id").primaryKey(),
   key: text("key").notNull().unique(),
   value: text("value").notNull(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+// Site stats (homepage counters).
+// These are primarily computed from real data, with optional manual tweaks.
+// For community, we support: users (registered users), discord (server count), or manual.
+export const siteStats = pgTable("site_stats", {
+  id: serial("id").primaryKey(),
+
+  // users | discord | manual
+  communityMode: text("community_mode").notNull().default("users"),
+  discordGuildId: text("discord_guild_id"),
+
+  // If communityMode === 'manual', this is the displayed community count.
+  communityManual: integer("community_manual").notNull().default(0),
+  // If communityMode !== 'manual', this is added to the computed base.
+  communityExtra: integer("community_extra").notNull().default(0),
+
+  // Added on top of computed totals
+  givenAwayExtra: numeric("given_away_extra", { precision: 12, scale: 2 }).notNull().default("0"),
+  winnersExtra: integer("winners_extra").notNull().default(0),
+
+  // No reliable automatic source yet; keep as admin-managed.
+  liveHoursManual: integer("live_hours_manual").notNull().default(0),
+
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
@@ -303,6 +355,8 @@ export const insertStreamEventEntrySchema = createInsertSchema(streamEventEntrie
 export const insertTournamentBracketSchema = createInsertSchema(tournamentBrackets).omit({ id: true, createdAt: true });
 
 export const insertSiteSettingSchema = createInsertSchema(siteSettings).omit({ id: true, updatedAt: true });
+export const insertSiteStatsSchema = createInsertSchema(siteStats).omit({ id: true, updatedAt: true });
+export const insertAdminAuditLogSchema = createInsertSchema(adminAuditLogs).omit({ id: true, createdAt: true });
 
 export const insertLeaderboardSchema = createInsertSchema(leaderboards).omit({ id: true, createdAt: true, lastFetchedAt: true }).extend({
   periodType: z.enum(["weekly", "biweekly", "monthly", "custom"]).default("monthly"),
@@ -338,6 +392,13 @@ export type InsertTournamentBracket = z.infer<typeof insertTournamentBracketSche
 
 export type SiteSetting = typeof siteSettings.$inferSelect;
 export type InsertSiteSetting = z.infer<typeof insertSiteSettingSchema>;
+
+export type SiteStats = typeof siteStats.$inferSelect;
+export type InsertSiteStats = z.infer<typeof insertSiteStatsSchema>;
+
+export type AdminAuditLog = typeof adminAuditLogs.$inferSelect;
+export type InsertAdminAuditLog = z.infer<typeof insertAdminAuditLogSchema>;
+
 
 export type Leaderboard = typeof leaderboards.$inferSelect;
 export type InsertLeaderboard = z.infer<typeof insertLeaderboardSchema>;
